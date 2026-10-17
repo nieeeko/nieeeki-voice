@@ -32,6 +32,7 @@ from pipecat.frames.frames import (
     UserStartedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 from pipecat.turns.types import ProcessFrameResult
 from pipecat.turns.user_start.min_words_user_turn_start_strategy import (
     MinWordsUserTurnStartStrategy,
@@ -185,6 +186,9 @@ class SoftInterruptGate(FrameProcessor):
     async def _fire(self, reason: str, interrupt: bool):
         try:
             if interrupt:
+                # Die Oberflaeche hoert, was gerade erklingt: sie blendet in der naechsten Wortpause
+                # aus. Der Server bricht danach ab (Zeitstempel laufen dem Ton voraus).
+                await self.push_frame(RTVIServerMessageFrame(data={"type": "leiser_stopp"}))
                 await asyncio.sleep(self._playback_lag_secs)
                 logger.info(f"{self}: weiche Unterbrechung ({reason})")
                 await self.push_frame(InterruptionFrame())

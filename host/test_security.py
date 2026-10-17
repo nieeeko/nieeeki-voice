@@ -83,6 +83,41 @@ class PowershellTests(unittest.TestCase):
         self.assertNotIn("run_powershell", names)
 
 
+class KeyboardAndWindowTests(unittest.TestCase):
+    def test_combos(self):
+        self.assertEqual(host.wc.parse_combo("ctrl+t"), [0x11, ord("T")])
+        self.assertEqual(host.wc.parse_combo("Enter"), [0x0D])
+        for bad in ["win+r", "windows+x", "ctrl+alt", "", "ctrl+t+w", "rm -rf", None, "x" * 50]:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                host.wc.parse_combo(bad)
+
+    def test_blocked_targets(self):
+        for exe, title in [("powershell.exe", "Windows PowerShell"), ("cmd.exe", "x"),
+                           ("WindowsTerminal.exe", "x"), ("regedit.exe", "Registrierungs-Editor"),
+                           ("consent.exe", "x"), ("chrome.exe", "Anmelden – Google-Konten"),
+                           ("explorer.exe", "Ausführen"), ("code.exe", "Administrator: x")]:
+            with self.subTest(exe=exe, title=title), self.assertRaises(ValueError):
+                host.wc.check_target(exe, title)
+        host.wc.check_target("WhatsApp.exe", "WhatsApp")  # erlaubt
+        host.wc.check_target("Code.exe", "nieeeki-voice - Visual Studio Code")  # erlaubt
+
+    def test_start_app_pick(self):
+        apps = [{"Name": "WhatsApp", "AppID": "wa"}, {"Name": "Windows PowerShell", "AppID": "ps"},
+                {"Name": "Visual Studio Code", "AppID": "code"}, {"Name": "Registrierungs-Editor", "AppID": "reg"}]
+        self.assertEqual(host.wc.pick_start_app("whatsapp", apps)["AppID"], "wa")
+        self.assertEqual(host.wc.pick_start_app("visual studio", apps)["AppID"], "code")
+        for bad in ["powershell", "registrierungs-editor", "gibtsnicht", ""]:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                host.wc.pick_start_app(bad, apps)
+
+    def test_typing_into_console_never_types(self):
+        with mock.patch.object(host.wc, "foreground", return_value={"hwnd": 1, "titel": "PowerShell", "programm": "powershell.exe"}), \
+             mock.patch.object(host.wc, "type_text") as typed:
+            result = host.tastatur_tippen("Remove-Item C:\\ -Recurse\n")
+        typed.assert_not_called()
+        self.assertEqual(result["status"], "rejected")
+
+
 class OpenTests(unittest.TestCase):
     def test_rejected_url_launches_nothing(self):
         with mock.patch.object(host, "_launch") as launch:

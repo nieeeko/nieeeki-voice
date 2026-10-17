@@ -14,6 +14,31 @@ declare global {
   }
 }
 
+type SoftStop = { armedAt: number | null; fading: boolean };
+
+/** nieekis Stimme in 140 ms ausblenden (weicher Stopp bei Unterbrechung). */
+function fadeOutAudio(audio: HTMLAudioElement | null, state: SoftStop) {
+  state.fading = true;
+  if (!audio) return;
+  const start = performance.now();
+  const step = () => {
+    const t = Math.min(1, (performance.now() - start) / 140);
+    audio.volume = 1 - t;
+    if (t < 1 && state.fading) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  // Sicherheitsnetz: nie dauerhaft stumm bleiben
+  setTimeout(() => {
+    if (state.fading) restoreAudio(audio, state);
+  }, 3000);
+}
+
+function restoreAudio(audio: HTMLAudioElement | null, state: SoftStop) {
+  state.armedAt = null;
+  state.fading = false;
+  if (audio) audio.volume = 1;
+}
+
 /** Aktion eines Entwicklungsauftrags, die Nikolaj per Klick freigeben muss. */
 export type Approval = { job: string; projekt: string; id: string; grund: string; detail: string };
 
@@ -36,6 +61,11 @@ export function useNieeeki() {
   const [error, setError] = useState<string | null>(null);
   const [canvasItems, setCanvasItems] = useState<CanvasItem[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
+
+  // Weicher Stopp bei Unterbrechungen (Server schickt "leiser_stopp")
+  const softStop = useRef<SoftStop>({ armedAt: null, fading: false });
+  const fadeOut = () => fadeOutAudio(audioRef.current, softStop.current);
+  const restoreVolume = () => restoreAudio(audioRef.current, softStop.current);
 
   const setPresence = useCallback((p: Presence) => {
     presenceRef.current = p;
@@ -70,6 +100,7 @@ export function useNieeeki() {
         },
         onUserStoppedSpeaking: () => setPresence("thinking"),
         onBotStartedSpeaking: () => {
+          restoreVolume(); // neue Antwort nach einem weichen Stopp wieder hoerbar
           setBotLine("");
           setPresence("speaking");
         },
@@ -81,6 +112,11 @@ export function useNieeeki() {
         },
         onRemoteAudioLevel: (level) => {
           levels.current.bot = level;
+          // Weicher Stopp: in der naechsten Wortpause (oder spaetestens nach 600 ms) ausblenden
+          const armed = softStop.current.armedAt;
+          if (armed && !softStop.current.fading && (level < 0.015 || performance.now() - armed > 600)) {
+            fadeOut();
+          }
         },
         onTrackStarted: (track, participant) => {
           if (participant?.local || track.kind !== "audio") return;
@@ -97,6 +133,7 @@ export function useNieeeki() {
             projekt?: string;
             items?: { id: string; grund: string; detail: string }[];
           };
+          if (msg?.type === "leiser_stopp") softStop.current.armedAt = performance.now();
           if (msg?.type === "canvas" && msg.item) {
             const item = msg.item;
             // Gleiche id = Aktualisierung (z. B. Fortschritt eines Entwicklungsauftrags)

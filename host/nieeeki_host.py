@@ -31,6 +31,8 @@ from urllib.parse import urlsplit
 
 from mcp.server.fastmcp import FastMCP
 
+import windows_control as wc
+
 AUDIT_LOG = Path(os.getenv("NIEEEKI_AUDIT_LOG", Path(__file__).with_name("nieeeki_audit.jsonl")))
 BIND_HOST = os.getenv("NIEEEKI_HOST_BIND", "127.0.0.1")  # Tailscale-IP eintragen
 BIND_PORT = int(os.getenv("NIEEEKI_HOST_PORT", "8765"))
@@ -186,16 +188,89 @@ def webseite_oeffnen(url: str, browser: str = "chrome") -> dict:
 
 @mcp.tool()
 def programm_oeffnen(name: str) -> dict:
-    """Startet ein Programm aus der festen Liste (change): chrome, edge, explorer, notepad, rechner,
-    einstellungen, vscode, terminal, spotify."""
+    """Startet ein installiertes Programm (change), z. B. WhatsApp, Spotify, VS Code, Claude, Chrome.
+    Gesucht wird im Startmenue. Ist es schon offen, besser fenster_fokussieren nutzen.
+    Shells, Registry und Admin-Werkzeuge startet nieeeki nicht."""
     try:
-        target = resolve_app(name)
+        try:
+            target = resolve_app(name)
+            label = name
+        except ValueError:
+            app = wc.pick_start_app(str(name), wc.start_menu_apps())
+            target, label = None, app["Name"]
     except ValueError as e:
         _audit({"tool": "programm_oeffnen", "name": str(name)[:50], "risk": "rejected", "error": str(e)})
         return {"status": "rejected", "summary": str(e)}
-    _audit({"tool": "programm_oeffnen", "name": name, "risk": "change"})
-    _launch(target)
-    return {"status": "success", "summary": f"{name} gestartet"}
+    _audit({"tool": "programm_oeffnen", "name": label, "risk": "change"})
+    if target:
+        _launch(target)
+    else:
+        wc.launch_start_app(app["AppID"])
+    return {"status": "success", "summary": f"{label} gestartet"}
+
+
+@mcp.tool()
+def fenster_auflisten() -> dict:
+    """Listet die offenen Fenster mit Titel und Programm (read). Nutzen, um zu sehen, was laeuft,
+    z. B. ob VS Code oder WhatsApp schon offen ist."""
+    windows = [{k: w[k] for k in ("titel", "programm")} for w in wc.list_windows()]
+    _audit({"tool": "fenster_auflisten", "risk": "read", "count": len(windows)})
+    return {"status": "success", "fenster": windows[:40], "vorne": wc.foreground()["titel"]}
+
+
+@mcp.tool()
+def fenster_fokussieren(fenster: str) -> dict:
+    """Holt ein offenes Fenster nach vorne (change). `fenster` = Teil des Titels oder Programmname,
+    z. B. 'WhatsApp', 'Code', 'Chrome'."""
+    try:
+        w = wc.find_window(str(fenster))
+    except ValueError as e:
+        return {"status": "rejected", "summary": str(e)}
+    _audit({"tool": "fenster_fokussieren", "titel": w["titel"], "programm": w["programm"], "risk": "change"})
+    wc.focus(w["hwnd"])
+    return {"status": "success", "summary": f"{w['titel']} ist vorne"}
+
+
+def _prepare_input(fenster: str | None) -> dict:
+    """Optional Fenster fokussieren, dann pruefen, ob dort getippt werden darf."""
+    if fenster:
+        wc.focus(wc.find_window(fenster)["hwnd"])
+    target = wc.foreground()
+    wc.check_target(target["programm"], target["titel"])
+    return target
+
+
+@mcp.tool()
+def tastatur_tippen(text: str, fenster: str = "") -> dict:
+    """Tippt Text ins Fenster vorne oder vorher ins genannte Fenster (change), z. B. eine Nachricht in
+    WhatsApp oder einen Prompt in den Claude-Chat in VS Code. Zeilenumbruch = Enter. Nur tippen, was
+    Nikolaj so gewollt hat. In Konsolen, Admin- und Passwortfenster tippt nieeeki nie."""
+    if not isinstance(text, str) or not text or len(text) > wc.MAX_TYPE_CHARS:
+        return {"status": "rejected", "summary": f"Text fehlt oder ist laenger als {wc.MAX_TYPE_CHARS} Zeichen"}
+    try:
+        target = _prepare_input(fenster or None)
+    except ValueError as e:
+        _audit({"tool": "tastatur_tippen", "fenster": str(fenster)[:80], "risk": "rejected", "error": str(e)})
+        return {"status": "rejected", "summary": str(e)}
+    _audit({"tool": "tastatur_tippen", "ziel": target["titel"][:120], "programm": target["programm"],
+            "zeichen": len(text), "risk": "change"})
+    wc.type_text(text)
+    return {"status": "success", "summary": f"{len(text)} Zeichen in {target['titel'][:60]} getippt"}
+
+
+@mcp.tool()
+def tasten_druecken(kombination: str, fenster: str = "") -> dict:
+    """Drueckt eine Taste oder Tastenkombination (change), z. B. 'enter', 'ctrl+t', 'ctrl+l', 'esc',
+    'alt+tab'. Windows-Taste ist gesperrt; in Konsolen, Admin- und Passwortfenstern nie."""
+    try:
+        codes = wc.parse_combo(kombination)
+        target = _prepare_input(fenster or None)
+    except ValueError as e:
+        _audit({"tool": "tasten_druecken", "kombination": str(kombination)[:40], "risk": "rejected", "error": str(e)})
+        return {"status": "rejected", "summary": str(e)}
+    _audit({"tool": "tasten_druecken", "kombination": kombination, "ziel": target["titel"][:120], "risk": "change"})
+    wc.press(codes)
+    return {"status": "success", "summary": f"{kombination} in {target['titel'][:60]} gedrueckt"}
 
 
 @mcp.tool()
