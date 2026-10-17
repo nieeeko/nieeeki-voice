@@ -41,6 +41,9 @@ eine Oberfläche mit Stimmlinie und Canvas sowie Werkzeuge für den Windows-PC.
 
 ## Hier weitermachen
 
+1. **Gesprächstest:** natürlichere Antwortenden, Uhrzeit, „merk dir …“, Lernen nach dem Gespräch;
+   danach schnellere Sprechgeschwindigkeit (Soniox `speed` 1,1). Eine Änderung pro Test.
+2. **Websuche** für aktuelle Infos (Such-API, z. B. Brave, Tavily oder Exa).
 3. **Verlauf zusammenfassen**, damit Haiku unter 100.000 Tokens pro Prompt bleibt (darüber 5× teurer).
 4. **Canvas-Tool** `canvas_show(type, title, data)` mit Renderern: Tabelle, Dokument, BPMN (bpmn-js), Mermaid/React Flow, Code.
 5. **PC-Host anbinden:** Voice-Core ruft Host-Tools per MCP auf; kritische Aktionen über Tabelle `actions` freigeben.
