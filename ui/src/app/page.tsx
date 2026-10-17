@@ -1,5 +1,6 @@
 "use client";
 
+import { Canvas } from "@/components/Canvas";
 import { VoiceLine } from "@/components/VoiceLine";
 import { useNieeeki, type Presence } from "@/lib/useNieeeki";
 
@@ -22,7 +23,7 @@ const CANVAS_KINDS = [
 ];
 
 export default function Home() {
-  const { presence, history, userLine, botLine, error, connect, disconnect } = useNieeeki();
+  const { presence, history, userLine, botLine, error, canvasItems, connect, disconnect } = useNieeeki();
   const online = presence !== "offline" && presence !== "connecting";
 
   return (
@@ -59,6 +60,9 @@ export default function Home() {
       </section>
 
       <section className="canvas" aria-label="Canvas">
+        {canvasItems.length > 0 ? (
+          <Canvas items={canvasItems} />
+        ) : (
         <div className="canvas-empty">
           <h2>Was nieeeki dir hier zeigt</h2>
           <p>Ergebnisse, die man sehen muss, landen auf dieser Fläche statt in der Sprache.</p>
@@ -71,6 +75,7 @@ export default function Home() {
             ))}
           </ul>
         </div>
+        )}
       </section>
     </div>
   );

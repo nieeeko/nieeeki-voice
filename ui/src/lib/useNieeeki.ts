@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PipecatClient } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
+import type { CanvasItem } from "@/components/Canvas";
 
 export type Presence = "offline" | "connecting" | "idle" | "listening" | "thinking" | "speaking";
 
@@ -23,6 +24,7 @@ export function useNieeeki() {
   const [userLine, setUserLine] = useState("");
   const [botLine, setBotLine] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [canvasItems, setCanvasItems] = useState<CanvasItem[]>([]);
 
   const setPresence = useCallback((p: Presence) => {
     presenceRef.current = p;
@@ -74,6 +76,14 @@ export function useNieeeki() {
           audioRef.current.srcObject = new MediaStream([track]);
           void audioRef.current.play();
         },
+        onServerMessage: (data) => {
+          // canvas_zeigen im Voice-Core -> neues Element aufs Canvas
+          const msg = data as { type?: string; item?: CanvasItem };
+          if (msg?.type === "canvas" && msg.item) {
+            const item = msg.item;
+            setCanvasItems((items) => [...items, item]);
+          }
+        },
         onError: (msg) => {
           // data ist meist ein Objekt ({ message } / { error }); String() ergab "[object Object]".
           const data = (msg as { data?: unknown }).data as
@@ -101,5 +111,5 @@ export function useNieeeki() {
     setPresence("offline");
   }, [setPresence]);
 
-  return { presence, history, userLine, botLine, error, connect, disconnect };
+  return { presence, history, userLine, botLine, error, canvasItems, connect, disconnect };
 }

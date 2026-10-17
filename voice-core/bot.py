@@ -38,6 +38,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
 from pipecat.services.anthropic.llm import AnthropicLLMService
+from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.services.soniox.stt import SonioxSTTService
 from pipecat.turns.user_stop.deferred_user_turn_stop_strategy import deferred
@@ -78,6 +79,7 @@ LEARN_EVERY_USER_TURNS = int(os.getenv("LEARN_EVERY_USER_TURNS") or 4)
 LEARN_OVERLAP = 4  # so viele fruehere Zeilen als Kontext mitgeben
 NIEEEKI_GREETING = os.getenv("NIEEEKI_GREETING", "Hi Nikolaj, ich bin da.")
 # Haelt Claude Nikolajs Satz fuer unvollstaendig, wartet sie so lange auf den Rest (Sekunden).
+SMART_TURN_STOP_SECS = float(os.getenv("SMART_TURN_STOP_SECS") or 1.0)
 TURN_INCOMPLETE_SHORT_SECS = float(os.getenv("TURN_INCOMPLETE_SHORT_SECS") or 3.0)
 TURN_INCOMPLETE_LONG_SECS = float(os.getenv("TURN_INCOMPLETE_LONG_SECS") or 8.0)
 # Weiche Unterbrechung: nach einem Einwurf spricht sie den Satz zu Ende, hoechstens aber
@@ -163,7 +165,15 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
                 # Satzende: Smart-Turn schlaegt vor, Claude entscheidet, ob Nikolaj fertig ist.
                 # Bei Bruchstuecken ("SQL Statement.") wartet sie still, statt sofort zu antworten.
                 stop=[
-                    deferred(TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3())),
+                    # Smart-Turn haelt kurze Antworten ("Ja") oft fuer unfertig und wartet dann
+                    # stop_secs Stille ab (Standard 3 s). Claude entscheidet danach ohnehin mit.
+                    deferred(
+                        TurnAnalyzerUserTurnStopStrategy(
+                            turn_analyzer=LocalSmartTurnAnalyzerV3(
+                                params=SmartTurnParams(stop_secs=SMART_TURN_STOP_SECS)
+                            )
+                        )
+                    ),
                     LLMTurnCompletionUserTurnStopStrategy(
                         config=UserTurnCompletionConfig(
                             incomplete_short_timeout=TURN_INCOMPLETE_SHORT_SECS,

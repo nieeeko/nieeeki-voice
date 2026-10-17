@@ -146,3 +146,17 @@ class MemoryStore:
             },
         )
         return row is not None
+
+    async def save_canvas(self, type_: str, title: str, data: dict) -> str | None:
+        """Canvas-Inhalt ablegen (canvas_items), damit er spaeter wieder aufrufbar ist."""
+        row = await self._insert(
+            "canvas_items",
+            {
+                "user_id": self.user_id,
+                "session_id": self.session_id,
+                "type": type_,
+                "title": title,
+                "data": data,
+            },
+        )
+        return row["id"] if row else None

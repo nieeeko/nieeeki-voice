@@ -50,8 +50,10 @@ BACKCHANNEL_WORDS = frozenset(
 
 
 def meaningful_word_count(text: str) -> int:
+    """Zaehlt echte Woerter. Einzelne Buchstaben sind Bruchstuecke der Live-Erkennung
+    ("J" vor "Ja", "H" vor "Hi") und zaehlen nicht."""
     words = (w.strip(".,!?…:;-\"'").lower() for w in text.split())
-    return sum(1 for w in words if w and w not in BACKCHANNEL_WORDS)
+    return sum(1 for w in words if len(w) >= 2 and w not in BACKCHANNEL_WORDS)
 
 
 class MeaningfulWordsUserTurnStartStrategy(MinWordsUserTurnStartStrategy):

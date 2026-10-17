@@ -12,6 +12,7 @@
     "@pipecat-ai/client-js": "^1.14.0",
     "@pipecat-ai/small-webrtc-transport": "^1.11.0",
     "@supabase/supabase-js": "^2.118.0",
+    "mermaid": "12.0.0",
     "next": "16.4.2",
     "react": "19.3.0",
     "react-dom": "19.3.0"

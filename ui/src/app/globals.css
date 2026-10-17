@@ -135,6 +135,49 @@ body {
 .kinds strong { font-weight: 700; }
 .kinds span { color: var(--ink-soft); font-size: 15px; }
 
+.canvas-board { width: 100%; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.canvas-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.canvas-tab {
+  appearance: none; border: 1px solid var(--rule); background: transparent; color: var(--ink-soft);
+  border-radius: 999px; padding: 6px 14px; font: 500 14px var(--font-body), sans-serif; cursor: pointer;
+  max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.canvas-tab[aria-current="true"] { border-color: var(--voice-bot); color: var(--ink); }
+.canvas-item { background: var(--panel); border-radius: 14px; padding: 28px; min-width: 0; }
+.canvas-item-head { margin-bottom: 18px; }
+.canvas-item-head h2 {
+  margin: 4px 0 0; font-family: var(--font-display), sans-serif; font-weight: 600;
+  font-size: 26px; letter-spacing: -0.02em;
+}
+.canvas-kind { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--voice-bot); }
+
+.canvas-table-wrap { overflow-x: auto; }
+.canvas-table { border-collapse: collapse; width: 100%; font-size: 15px; }
+.canvas-table th, .canvas-table td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.canvas-table th { font-weight: 700; color: var(--ink-soft); font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+.canvas-table tbody tr:hover { background: color-mix(in srgb, var(--voice-bot) 6%, transparent); }
+
+.canvas-code { border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+.canvas-code-bar {
+  display: flex; justify-content: space-between; align-items: center; padding: 8px 14px;
+  font-size: 13px; color: var(--ink-soft); border-bottom: 1px solid var(--rule);
+}
+.canvas-code-bar button {
+  appearance: none; border: 0; background: transparent; color: var(--voice-bot);
+  font: 600 13px var(--font-body), sans-serif; cursor: pointer;
+}
+.canvas-code pre { margin: 0; padding: 16px; overflow-x: auto; font-size: 14px; line-height: 1.6; }
+.canvas-code code, .canvas-doc code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; }
+
+.canvas-doc { max-width: 72ch; }
+.canvas-doc h3, .canvas-doc h4, .canvas-doc h5 { font-family: var(--font-display), sans-serif; margin: 20px 0 8px; }
+.canvas-doc p { margin: 0 0 12px; }
+.canvas-doc ul { margin: 0 0 12px; padding-left: 22px; }
+.canvas-doc code { background: color-mix(in srgb, var(--ink) 8%, transparent); padding: 1px 5px; border-radius: 4px; }
+
+.canvas-mermaid { overflow-x: auto; }
+.canvas-mermaid svg { max-width: 100%; height: auto; }
+
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; }
   .presence { border-right: 0; border-bottom: 1px solid var(--rule); padding: 28px 16px; }
