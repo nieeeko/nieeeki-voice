@@ -18,6 +18,7 @@ Start lokal:  uv run bot.py   (oder: python bot.py)  -> http://localhost:7860
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 from dotenv import load_dotenv
@@ -53,6 +54,8 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from memory import MemoryStore
 from persona import build_system_prompt
+from learning import learn_from_session
+from tools import register_tools
 from soft_interrupt import (
     MeaningfulWordsUserTurnStartStrategy,
     PlaybackTracker,
@@ -83,6 +86,9 @@ INTERRUPTED_NOTE = (
     "wo du aufgehoert hast. Reagiere natuerlich auf den Einwurf und knuepfe dann, falls noch "
     "relevant, an deinem letzten Gedanken an - nicht von vorn beginnen.]"
 )
+
+# Referenzen halten, sonst raeumt der Garbage Collector laufende Lern-Tasks weg.
+_background_tasks: set[asyncio.Task] = set()
 
 transport_params = {
     "webrtc": lambda: TransportParams(
@@ -132,7 +138,9 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         ),
     )
 
-    context = LLMContext()
+    tools = register_tools(llm, memory)
+    context = LLMContext(tools=tools)
+    transcript: list[tuple[str, str]] = []  # fuers Lernen nach dem Gespraech
 
     user_agg, assistant_agg = LLMContextAggregatorPair(
         context,
@@ -187,6 +195,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     @assistant_agg.event_handler("on_assistant_turn_stopped")
     async def on_assistant_turn_stopped(_agg, message):
         await memory.log_turn(role="assistant", content=message.content, interrupted=message.interrupted)
+        transcript.append(("assistant", message.content))
         if message.interrupted:
             logger.info("nieeeki wurde unterbrochen nach: {!r}", message.content[-80:])
             # Nur wenn sie schon etwas gesagt hat; sonst verwirrt die Notiz Claude.
@@ -197,6 +206,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     @user_agg.event_handler("on_user_turn_stopped")
     async def on_user_turn_stopped(_agg, _strategy, message):
         await memory.log_turn(role="user", content=message.content)
+        transcript.append(("user", message.content))
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(_transport, _client):
@@ -210,6 +220,10 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     async def on_client_disconnected(_transport, _client):
         await memory.end_session()
         await task.cancel()
+        # Im Hintergrund lernen (Fakten, Vorlieben, Sprechweise); blockiert nichts.
+        learn_task = asyncio.create_task(learn_from_session(memory, list(transcript), CLAUDE_MODEL))
+        _background_tasks.add(learn_task)
+        learn_task.add_done_callback(_background_tasks.discard)
 
     runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)
     await runner.run(task)

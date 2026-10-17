@@ -133,8 +133,8 @@ class MemoryStore:
         return r.json()
 
     async def remember(self, kind: str, content: str, embedding: list[float] | None = None,
-                       importance: int = 3) -> None:
-        await self._insert(
+                       importance: int = 3) -> bool:
+        row = await self._insert(
             "memories",
             {
                 "user_id": self.user_id,
@@ -145,3 +145,4 @@ class MemoryStore:
                 "source_session_id": self.session_id,
             },
         )
+        return row is not None

@@ -26,21 +26,29 @@ eine Oberfläche mit Stimmlinie und Canvas sowie Werkzeuge für den Windows-PC.
 - [x] Gesprächsmodell auf Haiku 5.5 umgestellt (≈ 1/20 der Kosten von Sonnet 5.5).
 - [x] Voice-Core und Host offline getestet (Imports, Pipeline-Aufbau, Risikoklassen); UI-Build und Lint grün.
 
-**Noch nicht getestet**
-- [ ] Erstes echtes Gespräch (Mikrofon → nieeeki → Lautsprecher) mit echten Schlüsseln.
+- [x] Erste echte Gespräche (17.10.2026): Latenz ≈ 1–1,5 s bis zum ersten Ton.
+- [x] Weiche Unterbrechung: Rückmeldelaute („mhm“, „ja genau“) ignorieren, sonst Satz bzw. max. 3 Wörter
+      zu Ende sprechen, nie mitten im Wort (`voice-core/soft_interrupt.py`).
+- [x] Satzende per Smart-Turn + Claude (wartet bei Bruchstücken); STT strikt Deutsch; Begrüßung wärmt TTS auf.
+- [x] Gedächtnis in DEV aktiv (`NIEEEKI_OWNER_ID`), Werkzeuge `aktuelle_zeit` und `merken`,
+      Lernen nach jedem Gespräch: Fakten, Vorlieben und Nikolajs Sprechweise (`voice-core/learning.py`).
+
+**Bekannt / offen**
+- Soniox-Spracherkennung läuft in der **US-Region** (Schlüssel gehört zu einem US-Projekt). Für EU-Datenhaltung
+  EU-Schlüssel anlegen und `SONIOX_STT_URL`/`SONIOX_TTS_URL` auf `*.eu.soniox.com` stellen.
+- Was Nikolaj sagt, während nieeeki spricht, wird schlechter erkannt (Echo). Kopfhörer bzw. Headset hilft.
+- `ui/package.json`: `eslint-config-next` wurde durch `npm audit fix --force` auf 14.x herabgestuft → Lint kaputt.
 
 ## Hier weitermachen
 
-1. **Erster Gesprächstest lokal** (siehe unten „Lokal starten“). Prüfen:
-   - Zeit vom Ende deines Satzes bis zur Antwort
-   - „warte mal, eigentlich …“ mitten in ihrer Antwort → stoppt sie sofort und knüpft an?
-   - kurzes „mhm“ → darf sie *nicht* stoppen
-2. **Gedächtnis einschalten:** nieeeki-Profil für Nikolajs Auth-User in `nieeeki_voice_dev` anlegen
-   (nur per service_role möglich), dann `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-   `NIEEEKI_OWNER_ID` in `.env` setzen.
 3. **Verlauf zusammenfassen**, damit Haiku unter 100.000 Tokens pro Prompt bleibt (darüber 5× teurer).
 4. **Canvas-Tool** `canvas_show(type, title, data)` mit Renderern: Tabelle, Dokument, BPMN (bpmn-js), Mermaid/React Flow, Code.
 5. **PC-Host anbinden:** Voice-Core ruft Host-Tools per MCP auf; kritische Aktionen über Tabelle `actions` freigeben.
+   **Zielbild:** nieeeki-Client startet mit Windows, ein leicht eingefärbter, wellenförmiger Rand über allen
+   Monitoren zeigt die Stimmen (eigene Farbe je Sprecher: nieeeki, Nikolaj, andere im Raum). Der Client hat
+   im Hintergrund vollen PC-Zugriff („öffne Chrome und Amazon, such eine Lampe fürs Wohnzimmer“), kritische
+   Aktionen weiter nur nach Freigabe. Die Web-UI wird zum Fernzugriff auf diesen Client: Canvas plus
+   Live-Stream der Monitore.
 6. **Weckwort „nieeeki“** (Porcupine oder openWakeWord), danach Desktop-App mit Tauri.
 7. **Runpod-Deployment:** WebRTC braucht UDP, Runpod leitet nur HTTP/TCP weiter → TURN-Server oder Daily-Transport nötig.
 8. **Eigene Stimme:** Soniox-Voice-Cloning (≤ 2 Min sauberer Aufnahme), A/B-Test gegen Bibliotheksstimme.
