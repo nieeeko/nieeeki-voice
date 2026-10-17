@@ -25,7 +25,8 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import TTSSpeakFrame
+from pipecat.frames.frames import LLMUpdateSettingsFrame, TTSSpeakFrame
+from pipecat.services.settings import LLMSettings
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -71,6 +72,10 @@ SONIOX_VOICE = os.getenv("SONIOX_VOICE", "Nina")  # spaeter: UUID der geklonten 
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-5-5")
 # Woerter ohne Rueckmeldelaute, ab denen sie unterbrochen wird ("Doch" reicht, "mhm" nicht)
 MIN_INTERRUPT_WORDS = int(os.getenv("MIN_INTERRUPT_WORDS", "1"))
+# Lernen im laufenden Gespraech: nach so vielen neuen Saetzen von Nikolaj wertet Haiku den
+# Abschnitt aus; Neues landet sofort im System-Prompt.
+LEARN_EVERY_USER_TURNS = int(os.getenv("LEARN_EVERY_USER_TURNS") or 4)
+LEARN_OVERLAP = 4  # so viele fruehere Zeilen als Kontext mitgeben
 NIEEEKI_GREETING = os.getenv("NIEEEKI_GREETING", "Hi Nikolaj, ich bin da.")
 # Haelt Claude Nikolajs Satz fuer unvollstaendig, wartet sie so lange auf den Rest (Sekunden).
 TURN_INCOMPLETE_SHORT_SECS = float(os.getenv("TURN_INCOMPLETE_SHORT_SECS") or 3.0)
@@ -140,7 +145,9 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
 
     tools = register_tools(llm, memory)
     context = LLMContext(tools=tools)
-    transcript: list[tuple[str, str]] = []  # fuers Lernen nach dem Gespraech
+    transcript: list[tuple[str, str]] = []  # fuers Lernen
+    learned_upto = 0  # bis zu diesem Index in transcript ist ausgewertet
+    learn_task: asyncio.Task | None = None
 
     user_agg, assistant_agg = LLMContextAggregatorPair(
         context,
@@ -207,6 +214,31 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     async def on_user_turn_stopped(_agg, _strategy, message):
         await memory.log_turn(role="user", content=message.content)
         transcript.append(("user", message.content))
+        new_user_turns = sum(1 for role, _ in transcript[learned_upto:] if role == "user")
+        if new_user_turns >= LEARN_EVERY_USER_TURNS and not (learn_task and not learn_task.done()):
+            start_learning(live=True)
+
+    async def learn(live: bool, previous: asyncio.Task | None):
+        nonlocal learned_upto
+        if previous and not previous.done():
+            await previous  # nie zwei Auswertungen gleichzeitig
+        end = len(transcript)
+        chunk = transcript[max(0, learned_upto - LEARN_OVERLAP):end]
+        saved = await learn_from_session(memory, chunk, CLAUDE_MODEL)
+        learned_upto = end
+        if saved and live:
+            # Sofort anwenden: neuer System-Prompt mit allem, was sie jetzt ueber Nikolaj weiss.
+            new_prompt = build_system_prompt(await memory.recall_profile())
+            await task.queue_frame(
+                LLMUpdateSettingsFrame(delta=LLMSettings(system_instruction=new_prompt))
+            )
+            logger.info("Im Gespraech gelernt und angewendet: {}", saved)
+
+    def start_learning(live: bool):
+        nonlocal learn_task
+        learn_task = asyncio.create_task(learn(live, learn_task))
+        _background_tasks.add(learn_task)  # Referenz halten, laeuft auch nach dem Auflegen weiter
+        learn_task.add_done_callback(_background_tasks.discard)
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(_transport, _client):
@@ -220,10 +252,8 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     async def on_client_disconnected(_transport, _client):
         await memory.end_session()
         await task.cancel()
-        # Im Hintergrund lernen (Fakten, Vorlieben, Sprechweise); blockiert nichts.
-        learn_task = asyncio.create_task(learn_from_session(memory, list(transcript), CLAUDE_MODEL))
-        _background_tasks.add(learn_task)
-        learn_task.add_done_callback(_background_tasks.discard)
+        # Rest seit der letzten Auswertung im Hintergrund lernen; blockiert nichts.
+        start_learning(live=False)
 
     runner = PipelineRunner(handle_sigint=runner_args.handle_sigint)
     await runner.run(task)

@@ -1,8 +1,9 @@
-"""Lernen nach dem Gespraech: Haiku liest das Gespraech und haelt neue Fakten, Vorlieben
-und Nikolajs Sprechweise fest. Die Eintraege landen in memories und stehen beim naechsten
-Gespraech ueber recall_profile() im System-Prompt.
+"""Lernen waehrend und nach dem Gespraech: Haiku liest einen Gespraechsabschnitt und haelt
+neue Fakten, Vorlieben und Nikolajs Sprechweise fest. Die Eintraege landen in memories;
+bot.py baut daraus sofort einen neuen System-Prompt, damit nieeeki sie noch im selben
+Gespraech anwendet.
 
-Laeuft im Hintergrund nach dem Auflegen, blockiert das Gespraech also nie.
+Laeuft immer im Hintergrund, blockiert das Gespraech also nie.
 """
 
 from __future__ import annotations
@@ -65,14 +66,14 @@ def _clean(text: str) -> str:
 
 async def learn_from_session(
     memory: MemoryStore, transcript: list[tuple[str, str]], model: str
-) -> int:
-    """Wertet das Gespraech aus und speichert neue Eintraege. Gibt die Anzahl zurueck."""
+) -> list[str]:
+    """Wertet den Abschnitt aus und speichert neue Eintraege. Gibt die gespeicherten zurueck."""
     if not memory.enabled:
-        return 0
+        return []
     lines = [(role, _clean(text)) for role, text in transcript if _clean(text)]
     if sum(1 for role, _ in lines if role == "user") < MIN_USER_TURNS:
-        logger.debug("Lernen uebersprungen: zu kurzes Gespraech")
-        return 0
+        logger.debug("Lernen uebersprungen: zu kurzer Abschnitt")
+        return []
 
     known = await memory.recall_profile(limit=100)
     gespraech = "\n".join(
@@ -99,28 +100,28 @@ async def learn_from_session(
         )
     except anthropic.APIStatusError as e:
         logger.warning("Lernen: API-Fehler {} {}", e.status_code, e.message)
-        return 0
+        return []
     except anthropic.APIConnectionError as e:
         logger.warning("Lernen: keine Verbindung ({})", e)
-        return 0
+        return []
 
     if response.stop_reason in ("refusal", "max_tokens"):
         logger.warning("Lernen: abgebrochen ({})", response.stop_reason)
-        return 0
+        return []
     text = next((b.text for b in response.content if b.type == "text"), "")
     try:
         entries = json.loads(text)["eintraege"][:MAX_ENTRIES]
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         logger.warning("Lernen: Antwort nicht lesbar ({})", e)
-        return 0
+        return []
 
-    saved = 0
+    saved: list[str] = []
     for e in entries:
         content = str(e.get("inhalt", "")).strip()
         if not content:
             continue
         importance = min(5, max(1, int(e.get("wichtigkeit", 3))))
         if await memory.remember(e["art"], content, importance=importance):
-            saved += 1
+            saved.append(content)
             logger.info("Gelernt ({}): {}", e["art"], content)
     return saved
