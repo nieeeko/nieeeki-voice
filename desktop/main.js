@@ -12,7 +12,7 @@
 
 const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerSaveBlocker, screen, session, shell } =
   require("electron");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const http = require("node:http");
 const os = require("node:os");
@@ -68,10 +68,34 @@ function startService(name, command, args, cwd) {
   });
   child.on("exit", (code) => console.log(`${name} beendet (${code})`));
   children.push(child);
+  // PID merken: so kann ein naechster Start einen verwaisten Dienst sicher beenden
+  fs.writeFileSync(path.join(logDir, `${name}.pid`), String(child.pid));
+}
+
+// Ganzen Prozessbaum beenden: "uv run" startet Python als Kindprozess; nur uv zu beenden liess den
+// alten Voice-Core weiterlaufen (Port 7860 belegt, neue Version wurde nie geladen).
+function killTree(pid) {
+  if (!pid) return;
+  spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true });
+}
+
+function killStale(name) {
+  const pidFile = path.join(__dirname, "logs", `${name}.pid`);
+  if (!fs.existsSync(pidFile)) return;
+  killTree(Number(fs.readFileSync(pidFile, "utf8")));
+  fs.rmSync(pidFile, { force: true });
+}
+
+function stopServices() {
+  for (const c of children.splice(0)) killTree(c.pid);
+  for (const name of ["voice-core", "ui"]) fs.rmSync(path.join(__dirname, "logs", `${name}.pid`), { force: true });
 }
 
 async function ensureServices() {
   if (process.env.NIEEEKI_MANAGE_SERVICES === "off") return;
+  // Reste eines frueheren Laufs dieser App beenden, damit immer der aktuelle Code laeuft
+  killStale("voice-core");
+  await new Promise((r) => setTimeout(r, 800));
   if (!(await isUp(VOICE_CORE_URL))) {
     const uv = path.join(os.homedir(), ".local", "bin", "uv.exe");
     startService("voice-core", fs.existsSync(uv) ? uv : "uv", ["run", "bot.py"], path.join(REPO, "voice-core"));
@@ -156,6 +180,16 @@ function loginItem() {
   return app.isPackaged ? {} : { path: process.execPath, args: [__dirname] };
 }
 
+function raisePriority() {
+  for (const m of app.getAppMetrics()) {
+    try {
+      os.setPriority(m.pid, os.constants.priority.PRIORITY_ABOVE_NORMAL);
+    } catch {
+      // Prozess schon weg oder keine Rechte: egal
+    }
+  }
+}
+
 function iconPath() {
   return path.join(REPO, "ui", "src", "app", "favicon.ico");
 }
@@ -182,6 +216,14 @@ function createTray() {
         click: (item) => app.setLoginItemSettings({ ...loginItem(), openAtLogin: item.checked }),
       },
       { type: "separator" },
+      {
+        label: "Voice-Core neu starten",
+        click: async () => {
+          killStale("voice-core");
+          await ensureServices();
+          mainWin.reload();
+        },
+      },
       { label: "Beenden", click: () => { quitting = true; app.quit(); } },
     ]),
   );
@@ -213,6 +255,8 @@ app.whenReady().then(async () => {
     callback(permission === "media" && origin === UI_ORIGIN);
   });
   powerSaveBlocker.start("prevent-app-suspension");
+  // Audio bekommt Vorrang, wenn Chrome & Co. beim Oeffnen kurz die CPU belegen (Aussetzer)
+  setInterval(raisePriority, 5000);
   createTray();
   await ensureServices();
   createMainWindow();
@@ -224,7 +268,7 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   quitting = true;
-  for (const c of children) if (!c.killed) c.kill();
+  stopServices();
 });
 
 app.on("window-all-closed", (e) => e.preventDefault()); // lebt im Tray weiter

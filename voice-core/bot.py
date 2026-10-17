@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 
 from dotenv import load_dotenv
 from loguru import logger
@@ -76,6 +77,13 @@ from soft_interrupt import (
 )
 
 load_dotenv(override=True)
+
+if sys.platform == "win32":
+    # Hoehere Prioritaet: wenn nieeeki Programme oeffnet, belegen die kurz die CPU; das Audio soll
+    # dann nicht stocken.
+    import ctypes
+
+    ctypes.windll.kernel32.SetPriorityClass(ctypes.windll.kernel32.GetCurrentProcess(), 0x8000)
 
 # Standard: EU-Endpunkte (Datenschutz); .env kann auf US umstellen
 SONIOX_STT_URL = os.getenv("SONIOX_STT_URL", "wss://stt-rt.eu.soniox.com/transcribe-websocket")
