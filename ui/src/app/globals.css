@@ -135,6 +135,24 @@ body {
 .kinds strong { font-weight: 700; }
 .kinds span { color: var(--ink-soft); font-size: 15px; }
 
+/* ---------- Freigaben ---------- */
+.approvals { display: flex; flex-direction: column; gap: 10px; }
+.approvals h2 { margin: 0; font: 600 15px var(--font-display), sans-serif; color: var(--cut); }
+.approval { border: 2px solid var(--cut); border-radius: 12px; padding: 12px 14px; background: var(--panel); }
+.approval-what { margin: 0 0 6px; }
+.approval-what span { color: var(--ink-soft); font-size: 14px; }
+.approval-detail {
+  display: block; font: 13px ui-monospace, "Cascadia Code", Consolas, monospace; color: var(--ink-soft);
+  word-break: break-all; margin-bottom: 10px;
+}
+.approval-actions { display: flex; gap: 8px; }
+.approval-actions button {
+  appearance: none; border-radius: 999px; padding: 8px 16px; cursor: pointer;
+  font: 600 14px var(--font-body), sans-serif;
+}
+.approve { border: 0; background: var(--cut); color: var(--bg); }
+.reject { border: 1px solid var(--rule); background: transparent; color: var(--ink); }
+
 .canvas-board { width: 100%; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .canvas-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
 .canvas-tab {

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 import httpx
 from loguru import logger
@@ -146,6 +147,34 @@ class MemoryStore:
             },
         )
         return row is not None
+
+    async def log_action(self, tool: str, params: dict, reason: str, risk: str) -> str | None:
+        """Audit-Eintrag fuer eine Aktion, die Nikolaj freigeben muss (Tabelle actions)."""
+        row = await self._insert(
+            "actions",
+            {
+                "user_id": self.user_id,
+                "session_id": self.session_id,
+                "tool": tool,
+                "params": params,
+                "reason": reason,
+                "risk": risk,
+                "status": "pending",
+            },
+        )
+        return row["id"] if row else None
+
+    async def update_action(self, action_id: str | None, status: str) -> None:
+        if not (self.enabled and action_id):
+            return
+        try:
+            r = await self._http().patch(
+                f"/actions?id=eq.{action_id}",
+                json={"status": status, "decided_at": datetime.now(timezone.utc).isoformat()},
+            )
+            r.raise_for_status()
+        except Exception as e:
+            logger.warning("update_action fehlgeschlagen: {}", e)
 
     async def save_canvas(self, type_: str, title: str, data: dict) -> str | None:
         """Canvas-Inhalt ablegen (canvas_items), damit er spaeter wieder aufrufbar ist."""

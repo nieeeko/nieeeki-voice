@@ -59,6 +59,7 @@ from memory import MemoryStore
 from persona import build_system_prompt
 from audio_monitor import AudioInputMonitor
 from learning import learn_from_session
+from dev_agent import DevAgent
 from pc_host import host_client, host_tools
 from tools import register_tools
 from soniox_tts import LazySonioxTTSService
@@ -150,6 +151,10 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     )
 
     tools = register_tools(llm, memory)
+    # Entwicklungsauftraege an Claude Code; Freigaben per Klick in der UI (siehe dev_agent.py)
+    dev = DevAgent(memory, user_turns=lambda: sum(1 for role, _ in transcript if role == "user"))
+    dev.register(llm)
+    tools = ToolsSchema(standard_tools=[*tools.standard_tools, *dev.schemas()])
     context = LLMContext(tools=tools)
 
     # PC-Werkzeuge (Host per MCP-stdio) im Hintergrund dazuholen: das Gespraech wartet nicht darauf.
@@ -225,6 +230,12 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         pipeline,
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
     )
+    dev.attach(task)
+
+    @task.rtvi.event_handler("on_client_message")
+    async def on_client_message(_rtvi, msg):
+        # Klicks aus der UI (z. B. Freigaben). Kommt nur ueber die eigene WebRTC-Verbindung.
+        await dev.on_client_message(msg.type, msg.data or {})
 
     @assistant_agg.event_handler("on_assistant_turn_stopped")
     async def on_assistant_turn_stopped(_agg, message):
@@ -283,6 +294,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         await task.cancel()
         if pc_client:
             await pc_client.close()
+        await dev.close()  # laufenden Entwicklungsauftrag beim Auflegen beenden
         # Rest seit der letzten Auswertung im Hintergrund lernen; blockiert nichts.
         start_learning(live=False)
 

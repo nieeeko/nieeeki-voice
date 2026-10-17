@@ -7,6 +7,9 @@ import type { CanvasItem } from "@/components/Canvas";
 
 export type Presence = "offline" | "connecting" | "idle" | "listening" | "thinking" | "speaking";
 
+/** Aktion eines Entwicklungsauftrags, die Nikolaj per Klick freigeben muss. */
+export type Approval = { job: string; projekt: string; id: string; grund: string; detail: string };
+
 /** Ein Abtastwert der Stimmlinie: oben Nikolaj, unten nieeeki. */
 export type LevelSample = { user: number; bot: number; cut: boolean };
 
@@ -25,6 +28,7 @@ export function useNieeeki() {
   const [botLine, setBotLine] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [canvasItems, setCanvasItems] = useState<CanvasItem[]>([]);
+  const [approvals, setApprovals] = useState<Approval[]>([]);
 
   const setPresence = useCallback((p: Presence) => {
     presenceRef.current = p;
@@ -78,10 +82,31 @@ export function useNieeeki() {
         },
         onServerMessage: (data) => {
           // canvas_zeigen im Voice-Core -> neues Element aufs Canvas
-          const msg = data as { type?: string; item?: CanvasItem };
+          const msg = data as {
+            type?: string;
+            item?: CanvasItem;
+            job?: string;
+            projekt?: string;
+            items?: { id: string; grund: string; detail: string }[];
+          };
           if (msg?.type === "canvas" && msg.item) {
             const item = msg.item;
-            setCanvasItems((items) => [...items, item]);
+            // Gleiche id = Aktualisierung (z. B. Fortschritt eines Entwicklungsauftrags)
+            setCanvasItems((items) => {
+              const i = item.id ? items.findIndex((it) => it.id === item.id) : -1;
+              if (i < 0) return [...items, item];
+              const next = [...items];
+              next[i] = item;
+              return next;
+            });
+          }
+          if (msg?.type === "freigaben" && msg.job && msg.items) {
+            const { job, projekt = "" } = msg;
+            const fresh = msg.items.map((it) => ({ ...it, job, projekt }));
+            setApprovals((list) => [
+              ...list.filter((a) => !fresh.some((f) => f.job === a.job && f.id === a.id)),
+              ...fresh,
+            ]);
           }
         },
         onError: (msg) => {
@@ -111,5 +136,11 @@ export function useNieeeki() {
     setPresence("offline");
   }, [setPresence]);
 
-  return { presence, history, userLine, botLine, error, canvasItems, connect, disconnect };
+  // Freigabe geht nur ueber die eigene WebRTC-Verbindung zum Voice-Core, nie per Sprache.
+  const decide = useCallback((a: Approval, ja: boolean) => {
+    clientRef.current?.sendClientMessage("freigabe", { job: a.job, id: a.id, entscheidung: ja ? "ja" : "nein" });
+    setApprovals((list) => list.filter((x) => !(x.job === a.job && x.id === a.id)));
+  }, []);
+
+  return { presence, history, userLine, botLine, error, canvasItems, approvals, decide, connect, disconnect };
 }

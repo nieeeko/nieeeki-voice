@@ -23,7 +23,8 @@ const CANVAS_KINDS = [
 ];
 
 export default function Home() {
-  const { presence, history, userLine, botLine, error, canvasItems, connect, disconnect } = useNieeeki();
+  const { presence, history, userLine, botLine, error, canvasItems, approvals, decide, connect, disconnect } =
+    useNieeeki();
   const online = presence !== "offline" && presence !== "connecting";
 
   return (
@@ -48,6 +49,28 @@ export default function Home() {
         </div>
 
         {error && <p className="error">{error}</p>}
+
+        {approvals.length > 0 && (
+          <section className="approvals" aria-label="Freigaben">
+            <h2>Wartet auf deine Freigabe</h2>
+            {approvals.map((a) => (
+              <article key={`${a.job}-${a.id}`} className="approval">
+                <p className="approval-what">
+                  <strong>{a.grund}</strong> <span>· {a.projekt}</span>
+                </p>
+                <code className="approval-detail">{a.detail}</code>
+                <div className="approval-actions">
+                  <button className="approve" onClick={() => decide(a, true)}>
+                    Freigeben
+                  </button>
+                  <button className="reject" onClick={() => decide(a, false)}>
+                    Ablehnen
+                  </button>
+                </div>
+              </article>
+            ))}
+          </section>
+        )}
 
         <button
           className="wake"

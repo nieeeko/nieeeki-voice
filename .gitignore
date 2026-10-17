@@ -11,3 +11,4 @@ nieeeki_audit.jsonl
 voice-samples/
 *.stackdump
 webrtc_internals_dump*.txt
+voice-core/.jobs/
