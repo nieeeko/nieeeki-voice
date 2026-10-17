@@ -24,6 +24,7 @@ import os
 from dotenv import load_dotenv
 from loguru import logger
 
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import LLMUpdateSettingsFrame, TTSSpeakFrame
 from pipecat.services.settings import LLMSettings
@@ -56,7 +57,9 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from memory import MemoryStore
 from persona import build_system_prompt
+from audio_monitor import AudioInputMonitor
 from learning import learn_from_session
+from pc_host import host_client, host_tools
 from tools import register_tools
 from soniox_tts import LazySonioxTTSService
 from soft_interrupt import (
@@ -148,6 +151,18 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
 
     tools = register_tools(llm, memory)
     context = LLMContext(tools=tools)
+
+    # PC-Werkzeuge (Host per MCP-stdio) im Hintergrund dazuholen: das Gespraech wartet nicht darauf.
+    pc_client = host_client()
+
+    async def attach_pc_tools():
+        pc = await host_tools(pc_client)
+        if pc:
+            context.set_tools(ToolsSchema(standard_tools=[*tools.standard_tools, *pc.standard_tools]))
+
+    pc_task = asyncio.create_task(attach_pc_tools())
+    _background_tasks.add(pc_task)
+    pc_task.add_done_callback(_background_tasks.discard)
     transcript: list[tuple[str, str]] = []  # fuers Lernen
     learned_upto = 0  # bis zu diesem Index in transcript ist ausgewertet
     learn_task: asyncio.Task | None = None
@@ -194,6 +209,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     pipeline = Pipeline(
         [
             transport.input(),
+            AudioInputMonitor(),  # Diagnose: Luecken und Pegel des Browser-Mikrofons
             stt,
             user_agg,
             soft_gate,
@@ -265,6 +281,8 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     async def on_client_disconnected(_transport, _client):
         await memory.end_session()
         await task.cancel()
+        if pc_client:
+            await pc_client.close()
         # Rest seit der letzten Auswertung im Hintergrund lernen; blockiert nichts.
         start_learning(live=False)
 
