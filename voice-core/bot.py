@@ -53,7 +53,7 @@ load_dotenv(override=True)
 SONIOX_STT_URL = os.getenv("SONIOX_STT_URL", "wss://stt-rt.eu.soniox.com/transcribe-websocket")
 SONIOX_TTS_URL = os.getenv("SONIOX_TTS_URL", "wss://tts-rt.soniox.com/tts-websocket")
 SONIOX_VOICE = os.getenv("SONIOX_VOICE", "Nina")  # spaeter: UUID der geklonten Stimme
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL_FAST", "claude-sonnet-5-5")
+CLAUDE_MODEL = os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-5-5")
 MIN_INTERRUPT_WORDS = int(os.getenv("MIN_INTERRUPT_WORDS", "3"))
 
 INTERRUPTED_NOTE = (
