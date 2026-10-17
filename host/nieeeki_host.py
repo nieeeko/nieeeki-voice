@@ -209,6 +209,49 @@ def programm_oeffnen(name: str) -> dict:
     return {"status": "success", "summary": f"{label} gestartet"}
 
 
+HOME = Path(os.environ.get("USERPROFILE", str(Path.home()))).resolve()
+SENSITIVE_PARTS = {".ssh", ".aws", ".gnupg", ".azure", ".kube", ".docker", "credentials"}
+OPEN_WITH = {"vscode": "vscode", "code": "vscode", "explorer": "explorer", "notepad": "notepad", "editor": "notepad"}
+
+
+def validate_local_path(pfad: object) -> Path:
+    """Nur vorhandene Pfade im eigenen Benutzerordner, keine Schluessel-/Zugangsdaten-Ordner."""
+    if not isinstance(pfad, str) or not pfad.strip() or len(pfad) > 400:
+        raise ValueError("Pfad fehlt")
+    path = Path(pfad.strip().strip('"')).expanduser()
+    if not path.is_absolute():
+        raise ValueError("Bitte den vollen Pfad, z. B. C:\\Users\\nikos\\Projekte\\radar")
+    path = path.resolve()
+    if not path.is_relative_to(HOME):
+        raise ValueError(f"Nur Pfade unter {HOME}")
+    if any(part.lower() in SENSITIVE_PARTS for part in path.parts):
+        raise ValueError("Ordner mit Zugangsdaten oeffnet nieeeki nicht")
+    if not path.exists():
+        raise ValueError(f"{path} gibt es nicht")
+    return path
+
+
+@mcp.tool()
+def oeffnen_mit(pfad: str, programm: str = "vscode") -> dict:
+    """Oeffnet einen Ordner oder eine Datei direkt in einem Programm (change): vscode (Standard, z. B.
+    ein Projektordner), explorer oder notepad. Der richtige Weg, um Projekte/Dateien zu oeffnen;
+    niemals Befehle wie 'code ...' in ein Fenster tippen. Nur Pfade im eigenen Benutzerordner."""
+    try:
+        path = validate_local_path(pfad)
+        app_name = OPEN_WITH.get(str(programm).strip().lower())
+        if not app_name:
+            raise ValueError("programm: vscode, explorer oder notepad")
+        if app_name == "notepad" and path.is_dir():
+            raise ValueError("Notepad oeffnet nur Dateien")
+        exe = resolve_app(app_name)
+    except ValueError as e:
+        _audit({"tool": "oeffnen_mit", "pfad": str(pfad)[:200], "risk": "rejected", "error": str(e)})
+        return {"status": "rejected", "summary": str(e)}
+    _audit({"tool": "oeffnen_mit", "pfad": str(path), "programm": app_name, "risk": "change"})
+    _launch(exe, [str(path)])  # argv, keine Shell
+    return {"status": "success", "summary": f"{path.name} in {app_name} geoeffnet"}
+
+
 @mcp.tool()
 def fenster_auflisten() -> dict:
     """Listet die offenen Fenster mit Titel und Programm (read). Nutzen, um zu sehen, was laeuft,

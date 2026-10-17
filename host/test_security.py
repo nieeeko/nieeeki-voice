@@ -118,6 +118,26 @@ class KeyboardAndWindowTests(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
 
 
+class OpenWithTests(unittest.TestCase):
+    def test_paths(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory(dir=host.HOME) as tmp:
+            ok = Path(tmp)
+            self.assertEqual(host.validate_local_path(str(ok)), ok.resolve())
+            (ok / ".ssh").mkdir()
+            for bad in ["", None, "Projekte\\radar", "C:\\Windows\\System32", "C:\\",
+                        str(ok / ".ssh"), str(ok / "gibtsnicht"), str(host.HOME / ".." / ".." / "Windows")]:
+                with self.subTest(bad=bad), self.assertRaises(ValueError):
+                    host.validate_local_path(bad)
+
+    def test_rejected_path_launches_nothing(self):
+        with mock.patch.object(host, "_launch") as launch:
+            result = host.oeffnen_mit("C:\\Windows\\System32", "explorer")
+        launch.assert_not_called()
+        self.assertEqual(result["status"], "rejected")
+
+
 class OpenTests(unittest.TestCase):
     def test_rejected_url_launches_nothing(self):
         with mock.patch.object(host, "_launch") as launch:
