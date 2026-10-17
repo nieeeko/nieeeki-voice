@@ -58,6 +58,7 @@ from memory import MemoryStore
 from persona import build_system_prompt
 from learning import learn_from_session
 from tools import register_tools
+from soniox_tts import LazySonioxTTSService
 from soft_interrupt import (
     MeaningfulWordsUserTurnStartStrategy,
     PlaybackTracker,
@@ -80,8 +81,8 @@ LEARN_OVERLAP = 4  # so viele fruehere Zeilen als Kontext mitgeben
 NIEEEKI_GREETING = os.getenv("NIEEEKI_GREETING", "Hi Nikolaj, ich bin da.")
 # Haelt Claude Nikolajs Satz fuer unvollstaendig, wartet sie so lange auf den Rest (Sekunden).
 SMART_TURN_STOP_SECS = float(os.getenv("SMART_TURN_STOP_SECS") or 1.0)
-TURN_INCOMPLETE_SHORT_SECS = float(os.getenv("TURN_INCOMPLETE_SHORT_SECS") or 3.0)
-TURN_INCOMPLETE_LONG_SECS = float(os.getenv("TURN_INCOMPLETE_LONG_SECS") or 8.0)
+TURN_INCOMPLETE_SHORT_SECS = float(os.getenv("TURN_INCOMPLETE_SHORT_SECS") or 1.5)
+TURN_INCOMPLETE_LONG_SECS = float(os.getenv("TURN_INCOMPLETE_LONG_SECS") or 3.0)  # 8 s fuehlte sich wie ein Haenger an
 # Weiche Unterbrechung: nach einem Einwurf spricht sie den Satz zu Ende, hoechstens aber
 # das laufende Wort plus so viele weitere Woerter (nie mitten im Wort).
 SOFT_INTERRUPT_MAX_WORDS = int(os.getenv("SOFT_INTERRUPT_MAX_WORDS") or 3)
@@ -123,7 +124,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         ),
     )
 
-    tts = SonioxTTSService(
+    tts = LazySonioxTTSService(
         api_key=os.environ["SONIOX_API_KEY"],
         url=SONIOX_TTS_URL,
         settings=SonioxTTSService.Settings(voice=SONIOX_VOICE, language=Language.DE),
@@ -211,7 +212,8 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
 
     @assistant_agg.event_handler("on_assistant_turn_stopped")
     async def on_assistant_turn_stopped(_agg, message):
-        await memory.log_turn(role="assistant", content=message.content, interrupted=message.interrupted)
+        # Erst alles, was das Gespraech braucht; die Datenbank zuletzt. Ist Supabase langsam,
+        # darf das weder den Verlauf noch die weiche Unterbrechung aufhalten.
         transcript.append(("assistant", message.content))
         if message.interrupted:
             logger.info("nieeeki wurde unterbrochen nach: {!r}", message.content[-80:])
@@ -219,14 +221,15 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             if message.content.strip():
                 context.add_message({"role": "user", "content": INTERRUPTED_NOTE})
         soft_gate.assistant_turn_recorded()
+        await memory.log_turn(role="assistant", content=message.content, interrupted=message.interrupted)
 
     @user_agg.event_handler("on_user_turn_stopped")
     async def on_user_turn_stopped(_agg, _strategy, message):
-        await memory.log_turn(role="user", content=message.content)
         transcript.append(("user", message.content))
         new_user_turns = sum(1 for role, _ in transcript[learned_upto:] if role == "user")
         if new_user_turns >= LEARN_EVERY_USER_TURNS and not (learn_task and not learn_task.done()):
             start_learning(live=True)
+        await memory.log_turn(role="user", content=message.content)
 
     async def learn(live: bool, previous: asyncio.Task | None):
         nonlocal learned_upto
