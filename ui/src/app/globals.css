@@ -1,0 +1,148 @@
+@import "tailwindcss";
+
+/* Gletschernebel hell, Nachtsee dunkel. Zwei Stimmen, zwei Farben: Seeblau (du), Indigo (nieeeki). */
+:root {
+  --bg: #e9efee;
+  --panel: #f6f9f8;
+  --ink: #1d2a31;
+  --ink-soft: #5a6b73;
+  --rule: #c5d1d0;
+  --voice-user: #1f7a8c;
+  --voice-bot: #5b3fd1;
+  --cut: #d14b3f;
+  --focus: #5b3fd1;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121b22;
+    --panel: #18242c;
+    --ink: #e4ecef;
+    --ink-soft: #93a6ae;
+    --rule: #2c3d47;
+    --voice-user: #4fb3c7;
+    --voice-bot: #9a86f2;
+    --cut: #f07a6e;
+    --focus: #9a86f2;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body), system-ui, sans-serif;
+  font-size: 17px;
+  line-height: 1.5;
+}
+
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+
+.shell {
+  display: grid;
+  grid-template-columns: minmax(320px, 440px) 1fr;
+  min-height: 100dvh;
+}
+
+/* ---------- Praesenz ---------- */
+.presence {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 40px 32px;
+  border-right: 1px solid var(--rule);
+}
+
+.presence-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+
+.wordmark {
+  margin: 0;
+  font-family: var(--font-display), sans-serif;
+  font-weight: 800;
+  font-size: 56px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--ink);
+  transition: color 300ms ease, letter-spacing 300ms ease;
+}
+.presence[data-presence="speaking"] .wordmark { color: var(--voice-bot); letter-spacing: -0.02em; }
+.presence[data-presence="listening"] .wordmark { color: var(--voice-user); }
+.presence[data-presence="offline"] .wordmark { color: var(--ink-soft); }
+
+.state {
+  margin: 0;
+  font-family: var(--font-display), sans-serif;
+  font-size: 20px;
+  color: var(--ink-soft);
+}
+
+.voice-line {
+  width: 100%;
+  height: 160px;
+  display: block;
+  background: var(--panel);
+  border-radius: 14px;
+}
+
+.legend { display: flex; justify-content: space-between; font-size: 14px; color: var(--ink-soft); margin-top: -12px; }
+.legend-user::before, .legend-bot::before {
+  content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px;
+}
+.legend-user::before { background: var(--voice-user); }
+.legend-bot::before { background: var(--voice-bot); }
+
+.lines { min-height: 120px; display: flex; flex-direction: column; gap: 10px; }
+.lines p { margin: 0; max-width: 38ch; }
+.line-user { color: var(--voice-user); }
+.line-bot { color: var(--ink); font-size: 19px; }
+
+.error { margin: 0; color: var(--cut); font-size: 15px; }
+
+.wake {
+  margin-top: auto;
+  appearance: none;
+  border: 0;
+  border-radius: 999px;
+  padding: 16px 24px;
+  font: 600 18px var(--font-display), sans-serif;
+  background: var(--ink);
+  color: var(--bg);
+  cursor: pointer;
+}
+.wake:disabled { opacity: 0.6; cursor: progress; }
+.presence[data-presence="speaking"] .wake,
+.presence[data-presence="listening"] .wake,
+.presence[data-presence="thinking"] .wake,
+.presence[data-presence="idle"] .wake { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 2px var(--ink); }
+
+.fine { margin: -8px 0 0; font-size: 14px; color: var(--ink-soft); text-align: center; }
+
+/* ---------- Canvas ---------- */
+.canvas { padding: 40px; display: flex; }
+.canvas-empty { margin: auto; max-width: 560px; }
+.canvas-empty h2 {
+  margin: 0 0 8px;
+  font-family: var(--font-display), sans-serif;
+  font-weight: 600;
+  font-size: 30px;
+  letter-spacing: -0.02em;
+}
+.canvas-empty > p { margin: 0 0 28px; color: var(--ink-soft); }
+.kinds { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 18px 28px; }
+.kinds li { display: flex; flex-direction: column; gap: 2px; padding-left: 14px; border-left: 3px solid var(--rule); }
+.kinds strong { font-weight: 700; }
+.kinds span { color: var(--ink-soft); font-size: 15px; }
+
+@media (max-width: 860px) {
+  .shell { grid-template-columns: 1fr; }
+  .presence { border-right: 0; border-bottom: 1px solid var(--rule); padding: 28px 16px; }
+  .canvas { padding: 28px 16px; }
+  .kinds { grid-template-columns: 1fr; }
+  .wordmark { font-size: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wordmark { transition: none; }
+}

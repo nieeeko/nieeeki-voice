@@ -1,0 +1,6 @@
+[project]
+name = "nieeeki-host"
+version = "0.1.0"
+description = "nieeeki-Host: Windows-Werkzeugserver (MCP) mit Freigabe-Klassen"
+requires-python = ">=3.11"
+dependencies = ["mcp>=1.10,<2"]
