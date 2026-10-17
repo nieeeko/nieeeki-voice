@@ -5,8 +5,8 @@ Pipeline:  Mikrofon (WebRTC, Browser-AEC) -> Silero-VAD -> Soniox STT (Streaming
 
 Unterbrechungen:
   * Waehrend nieeeki spricht, laufen VAD + STT weiter.
-  * MinWordsUserTurnStartStrategy: erst ab N Woertern wird nieeeki unterbrochen,
-    "mhm"/"ja" (Rueckkanal) stoppen sie also nicht.
+  * MeaningfulWordsUserTurnStartStrategy: Rueckmeldelaute ("mhm", "ja genau") stoppen sie
+    nicht, jedes andere Wort schon ("Doch", "Stopp").
   * Pipecat schreibt nur die TATSAECHLICH gesprochenen Woerter in den Kontext
     (Soniox TTS liefert Wort-Zeitstempel). Nach einer Unterbrechung sieht Claude
     genau, wo sie aufgehoert hat.
@@ -49,14 +49,15 @@ from pipecat.turns.user_turn_completion_mixin import UserTurnCompletionConfig
 from pipecat.services.soniox.tts import SonioxTTSService
 from pipecat.transcriptions.language import Language
 from pipecat.transports.base_transport import TransportParams
-from pipecat.turns.user_start.min_words_user_turn_start_strategy import (
-    MinWordsUserTurnStartStrategy,
-)
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from memory import MemoryStore
 from persona import build_system_prompt
-from soft_interrupt import PlaybackTracker, SoftInterruptGate
+from soft_interrupt import (
+    MeaningfulWordsUserTurnStartStrategy,
+    PlaybackTracker,
+    SoftInterruptGate,
+)
 
 load_dotenv(override=True)
 
@@ -65,16 +66,15 @@ SONIOX_STT_URL = os.getenv("SONIOX_STT_URL", "wss://stt-rt.eu.soniox.com/transcr
 SONIOX_TTS_URL = os.getenv("SONIOX_TTS_URL", "wss://tts-rt.soniox.com/tts-websocket")
 SONIOX_VOICE = os.getenv("SONIOX_VOICE", "Nina")  # spaeter: UUID der geklonten Stimme
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-5-5")
-MIN_INTERRUPT_WORDS = int(os.getenv("MIN_INTERRUPT_WORDS", "3"))
+# Woerter ohne Rueckmeldelaute, ab denen sie unterbrochen wird ("Doch" reicht, "mhm" nicht)
+MIN_INTERRUPT_WORDS = int(os.getenv("MIN_INTERRUPT_WORDS", "1"))
 NIEEEKI_GREETING = os.getenv("NIEEEKI_GREETING", "Hi Nikolaj, ich bin da.")
 # Haelt Claude Nikolajs Satz fuer unvollstaendig, wartet sie so lange auf den Rest (Sekunden).
 TURN_INCOMPLETE_SHORT_SECS = float(os.getenv("TURN_INCOMPLETE_SHORT_SECS") or 3.0)
 TURN_INCOMPLETE_LONG_SECS = float(os.getenv("TURN_INCOMPLETE_LONG_SECS") or 8.0)
-# Weiche Unterbrechung: so lange darf sie den Satz noch zu Ende sprechen, danach
-# stoppt sie nach dem laufenden Wort plus N weiteren Woertern (nie mitten im Wort).
-# Kurz halten: solange beide sprechen, versteht die Spracherkennung Nikolaj schlechter.
-SOFT_INTERRUPT_MAX_SECS = float(os.getenv("SOFT_INTERRUPT_MAX_SECS") or 1.5)
-SOFT_INTERRUPT_EXTRA_WORDS = int(os.getenv("SOFT_INTERRUPT_EXTRA_WORDS") or 1)
+# Weiche Unterbrechung: nach einem Einwurf spricht sie den Satz zu Ende, hoechstens aber
+# das laufende Wort plus so viele weitere Woerter (nie mitten im Wort).
+SOFT_INTERRUPT_MAX_WORDS = int(os.getenv("SOFT_INTERRUPT_MAX_WORDS") or 3)
 # So weit laufen die Wort-Zeitstempel dem hoerbaren Ton voraus (gemessen: ~0,5 s).
 SOFT_INTERRUPT_LAG_SECS = float(os.getenv("SOFT_INTERRUPT_LAG_SECS") or 0.5)
 
@@ -141,7 +141,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             user_turn_strategies=UserTurnStrategies(
                 # Unterbrechen entscheidet das SoftInterruptGate, nicht die Strategie.
                 start=[
-                    MinWordsUserTurnStartStrategy(
+                    MeaningfulWordsUserTurnStartStrategy(
                         min_words=MIN_INTERRUPT_WORDS, enable_interruptions=False
                     )
                 ],
@@ -161,8 +161,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     )
 
     soft_gate = SoftInterruptGate(
-        max_finish_secs=SOFT_INTERRUPT_MAX_SECS,
-        extra_words=SOFT_INTERRUPT_EXTRA_WORDS,
+        max_words=SOFT_INTERRUPT_MAX_WORDS,
         playback_lag_secs=SOFT_INTERRUPT_LAG_SECS,
     )
 

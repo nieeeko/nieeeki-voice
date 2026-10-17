@@ -5,9 +5,8 @@ Ablauf
     (MinWordsUserTurnStartStrategy(enable_interruptions=False)).
   * SoftInterruptGate (zwischen user_agg und llm) merkt: Nikolaj redet, waehrend nieeeki spricht.
   * PlaybackTracker (nach transport.output) meldet jedes Wort, sobald es laut Zeitstempel beginnt.
-  * Unterbrochen wird an der naechsten Satzgrenze. Ist der Satz nach max_finish_secs noch nicht
-    zu Ende, spricht sie das laufende Wort und extra_words weitere Woerter aus und stoppt dann,
-    also immer an einer Wortgrenze.
+  * Unterbrochen wird an der naechsten Satzgrenze, spaetestens aber nach dem laufenden Wort plus
+    max_words weiteren Woertern, also immer an einer Wortgrenze.
   * Die Wort-Zeitstempel laufen dem hoerbaren Ton voraus (Puffer im WebRTC-Pfad). Deshalb wird
     die Unterbrechung um playback_lag_secs verzoegert; Woerter in dieser Spanne gelten als nicht
     gesprochen.
@@ -33,8 +32,45 @@ from pipecat.frames.frames import (
     UserStartedSpeakingFrame,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.turns.types import ProcessFrameResult
+from pipecat.turns.user_start.min_words_user_turn_start_strategy import (
+    MinWordsUserTurnStartStrategy,
+)
 
 SENTENCE_END = (".", "!", "?", "…", ":")
+
+# Rueckmeldelaute: zeigen Zuhoeren, sind kein Einwurf. Alles andere zaehlt ("Doch", "Nein", "Stopp").
+BACKCHANNEL_WORDS = frozenset(
+    {
+        "mhm", "mhmm", "mm", "hm", "hmm", "ähm", "äh", "aha", "ah", "oh", "ok", "okay",
+        "ja", "jaja", "jo", "genau", "stimmt", "richtig", "klar", "super", "gut", "cool",
+        "achso", "ach", "so", "verstehe", "uh", "huh",
+    }
+)
+
+
+def meaningful_word_count(text: str) -> int:
+    words = (w.strip(".,!?…:;-\"'").lower() for w in text.split())
+    return sum(1 for w in words if w and w not in BACKCHANNEL_WORDS)
+
+
+class MeaningfulWordsUserTurnStartStrategy(MinWordsUserTurnStartStrategy):
+    """Wie MinWords, aber waehrend nieeeki spricht zaehlen Rueckmeldelaute nicht mit.
+
+    "mhm" oder "ja genau" lassen sie weiterreden, ein einzelnes "Doch" oder "Stopp" unterbricht.
+    Spricht sie nicht, startet wie bisher jedes Wort den Turn.
+    """
+
+    async def _handle_transcription(self, frame) -> ProcessFrameResult:
+        if not self._bot_speaking:
+            return await super()._handle_transcription(frame)
+        count = meaningful_word_count(frame.text)
+        if count >= self._min_words:
+            logger.debug(f"{self}: Einwurf erkannt ({frame.text!r})")
+            await self.trigger_user_turn_started()
+            return ProcessFrameResult.STOP
+        await self.trigger_reset_aggregation()
+        return ProcessFrameResult.CONTINUE
 ASSISTANT_RECORD_TIMEOUT_SECS = 1.0
 
 
@@ -44,23 +80,20 @@ class SoftInterruptGate(FrameProcessor):
     def __init__(
         self,
         *,
-        max_finish_secs: float = 1.5,
-        extra_words: int = 1,
+        max_words: int = 3,
         playback_lag_secs: float = 0.5,
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self._max_finish_secs = max_finish_secs
-        self._extra_words = extra_words
+        self._max_words = max_words
         self._playback_lag_secs = playback_lag_secs
         self._bot_speaking = False
         self._pending = False  # Nikolaj spricht, Unterbrechung steht aus
         self._firing = False  # Grenze gefunden, Unterbrechung laeuft
         self._last_word_ended_sentence = False
-        self._words_left: int | None = None  # gesetzt, sobald max_finish_secs abgelaufen ist
+        self._words_left = 0  # so viele Woerter darf sie nach dem Einwurf noch sprechen
         self._held: list[Frame] = []
         self._held_user_msgs: list[dict] = []
-        self._deadline_task: asyncio.Task | None = None
         self._fire_task: asyncio.Task | None = None
         self._turns_recorded = 0
         self._turns_at_arm = 0
@@ -122,11 +155,10 @@ class SoftInterruptGate(FrameProcessor):
             if self._last_word_ended_sentence:
                 self._start_fire("Satzende")
                 return True
-            if self._words_left is not None:
-                if self._words_left <= 0:
-                    self._start_fire("Wortgrenze nach Zeitlimit")
-                    return True
-                self._words_left -= 1
+            if self._words_left <= 0:
+                self._start_fire("Wortlimit")
+                return True
+            self._words_left -= 1
         self._last_word_ended_sentence = text.rstrip().endswith(SENTENCE_END)
         return False
 
@@ -134,26 +166,15 @@ class SoftInterruptGate(FrameProcessor):
         if self._pending or self._firing:
             return
         self._pending = True
-        self._words_left = None
+        self._words_left = self._max_words
         self._turns_at_arm = self._turns_recorded
-        self._deadline_task = self.create_task(self._deadline(), name="soft_interrupt_deadline")
         logger.debug(f"{self}: Nikolaj spricht, nieeeki beendet erst den Satz")
-
-    async def _deadline(self):
-        await asyncio.sleep(self._max_finish_secs)
-        if self._pending:
-            self._words_left = self._extra_words
-        self._deadline_task = None
 
     def _start_fire(self, reason: str, *, interrupt: bool = True):
         if not self._pending:
             return
         self._pending = False
         self._firing = True
-        self._words_left = None
-        if self._deadline_task:
-            self._deadline_task.cancel()
-            self._deadline_task = None
         # Eigener Task: der Aufrufer (Tracker) darf nicht blockieren, sonst haengt die Pipeline.
         self._fire_task = self.create_task(
             self._fire(reason, interrupt), name="soft_interrupt_fire"
@@ -205,10 +226,9 @@ class SoftInterruptGate(FrameProcessor):
 
     async def cleanup(self):
         await super().cleanup()
-        for task in (self._deadline_task, self._fire_task):
-            if task:
-                await self.cancel_task(task)
-        self._deadline_task = self._fire_task = None
+        if self._fire_task:
+            await self.cancel_task(self._fire_task)
+            self._fire_task = None
 
 
 class PlaybackTracker(FrameProcessor):
