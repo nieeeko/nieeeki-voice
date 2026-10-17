@@ -33,8 +33,13 @@ from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
+    LLMAssistantAggregatorParams,
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
+)
+from pipecat.utils.context.llm_context_summarization import (
+    LLMAutoContextSummarizationConfig,
+    LLMContextSummaryConfig,
 )
 from pipecat.runner.types import RunnerArguments
 from pipecat.runner.utils import create_transport
@@ -57,10 +62,11 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from memory import MemoryStore
 from persona import build_system_prompt
-from audio_monitor import AudioInputMonitor
+from audio_monitor import AudioInputMonitor, SpeakerTracker
 from learning import learn_from_session
 from dev_agent import DevAgent
 from pc_host import host_client, host_tools
+from screen import register_screen_tools
 from tools import register_tools
 from soniox_tts import LazySonioxTTSService
 from soft_interrupt import (
@@ -81,7 +87,14 @@ MIN_INTERRUPT_WORDS = int(os.getenv("MIN_INTERRUPT_WORDS", "1"))
 # Lernen im laufenden Gespraech: nach so vielen neuen Saetzen von Nikolaj wertet Haiku den
 # Abschnitt aus; Neues landet sofort im System-Prompt.
 LEARN_EVERY_USER_TURNS = int(os.getenv("LEARN_EVERY_USER_TURNS") or 4)
-LEARN_OVERLAP = 4  # so viele fruehere Zeilen als Kontext mitgeben
+LEARN_OVERLAP = 4
+SUMMARY_TRIGGER_TOKENS = int(os.getenv("SUMMARY_TRIGGER_TOKENS") or 60000)
+SUMMARY_TARGET_TOKENS = int(os.getenv("SUMMARY_TARGET_TOKENS") or 25000)
+SUMMARY_PROMPT = (
+    "Fasse das bisherige Gespraech zwischen Nikolaj und nieeeki auf Deutsch knapp zusammen: Themen, "
+    "Entscheidungen, offene Auftraege, Namen, Zahlen, Links und was nieeeki am PC getan hat. "
+    "Nichts erfinden, keine Wertungen."
+)  # so viele fruehere Zeilen als Kontext mitgeben
 NIEEEKI_GREETING = os.getenv("NIEEEKI_GREETING", "Hi Nikolaj, ich bin da.")
 # Haelt Claude Nikolajs Satz fuer unvollstaendig, wartet sie so lange auf den Rest (Sekunden).
 SMART_TURN_STOP_SECS = float(os.getenv("SMART_TURN_STOP_SECS") or 1.0)
@@ -159,11 +172,15 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
 
     # PC-Werkzeuge (Host per MCP-stdio) im Hintergrund dazuholen: das Gespraech wartet nicht darauf.
     pc_client = host_client()
+    # Bildschirm sehen/klicken: Foto vom Host, Bildmodell entscheidet (siehe screen.py)
+    screen_schemas = register_screen_tools(llm, lambda: pc_client)
 
     async def attach_pc_tools():
         pc = await host_tools(pc_client)
         if pc:
-            context.set_tools(ToolsSchema(standard_tools=[*tools.standard_tools, *pc.standard_tools]))
+            context.set_tools(
+                ToolsSchema(standard_tools=[*tools.standard_tools, *pc.standard_tools, *screen_schemas])
+            )
 
     pc_task = asyncio.create_task(attach_pc_tools())
     _background_tasks.add(pc_task)
@@ -174,6 +191,20 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
 
     user_agg, assistant_agg = LLMContextAggregatorPair(
         context,
+        # Lange Gespraeche zusammenfassen, bevor der Prompt teuer wird (Haiku: ab 100k Tokens 5x Preis)
+        assistant_params=LLMAssistantAggregatorParams(
+            enable_auto_context_summarization=True,
+            auto_context_summarization_config=LLMAutoContextSummarizationConfig(
+                max_context_tokens=SUMMARY_TRIGGER_TOKENS,
+                max_unsummarized_messages=None,
+                summary_config=LLMContextSummaryConfig(
+                    target_context_tokens=SUMMARY_TARGET_TOKENS,
+                    min_messages_after_summary=8,
+                    summarization_prompt=SUMMARY_PROMPT,
+                    summary_message_template="Zusammenfassung des bisherigen Gespraechs: {summary}",
+                ),
+            ),
+        ),
         user_params=LLMUserAggregatorParams(
             vad_analyzer=SileroVADAnalyzer(),
             user_turn_strategies=UserTurnStrategies(
@@ -216,6 +247,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             transport.input(),
             AudioInputMonitor(),  # Diagnose: Luecken und Pegel des Browser-Mikrofons
             stt,
+            SpeakerTracker(),  # wer spricht -> Farbe im Stimmen-Rand
             user_agg,
             soft_gate,
             llm,

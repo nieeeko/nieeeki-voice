@@ -195,6 +195,7 @@ ipcMain.on("levels", (event, sample) => {
     user: clamp(Number(sample?.user)),
     bot: clamp(Number(sample?.bot)),
     cut: Boolean(sample?.cut),
+    speaker: Math.max(0, Math.min(7, Math.trunc(Number(sample?.speaker)) || 0)),
   };
   for (const w of overlays) if (!w.isDestroyed()) w.webContents.send("levels", s);
 });

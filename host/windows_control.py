@@ -202,6 +202,95 @@ def press(codes: list[int]) -> None:
     time.sleep(0.05)
 
 
+# ---------- Bildschirm und Maus ----------
+MAX_IMAGE_EDGE = 1568  # Kantenlaenge, die Claude-Bildmodelle ohne Verkleinern verarbeiten
+
+
+def _dpi_aware() -> None:
+    """Pixelgenaue Koordinaten auf skalierten Monitoren (sonst passen Foto und Klick nicht zusammen)."""
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per Monitor
+    except (AttributeError, OSError):
+        pass
+
+
+def monitor_of_foreground() -> int:
+    """Index (mss, ab 1) des Monitors mit dem Fenster im Vordergrund."""
+    import mss
+    _dpi_aware()
+    win32gui, _, _ = _win32()
+    left, top, right, bottom = win32gui.GetWindowRect(win32gui.GetForegroundWindow())
+    cx, cy = (left + right) // 2, (top + bottom) // 2
+    with mss.mss() as sct:
+        for i, m in enumerate(sct.monitors[1:], start=1):
+            if m["left"] <= cx < m["left"] + m["width"] and m["top"] <= cy < m["top"] + m["height"]:
+                return i
+    return 1
+
+
+def screenshot(monitor: int = 0) -> dict:
+    """JPEG eines Monitors (0 = der mit dem Fenster vorne) plus Umrechnung Bild -> Bildschirm."""
+    import base64
+    import io
+
+    import mss
+    from PIL import Image
+
+    _dpi_aware()
+    with mss.mss() as sct:
+        index = monitor or monitor_of_foreground()
+        if not 1 <= index < len(sct.monitors):
+            raise ValueError(f"Monitor {monitor} gibt es nicht (1 bis {len(sct.monitors) - 1})")
+        m = sct.monitors[index]
+        raw = sct.grab(m)
+    img = Image.frombytes("RGB", raw.size, raw.rgb)
+    scale = min(1.0, MAX_IMAGE_EDGE / max(img.size))
+    if scale < 1.0:
+        img = img.resize((round(img.width * scale), round(img.height * scale)), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=80)
+    return {
+        "monitor": index, "left": m["left"], "top": m["top"], "width": m["width"], "height": m["height"],
+        "scale": scale, "bild_breite": img.width, "bild_hoehe": img.height,
+        "jpeg_base64": base64.b64encode(buf.getvalue()).decode("ascii"),
+    }
+
+
+def window_at(x: int, y: int) -> dict:
+    """Hauptfenster unter einem Bildschirmpunkt (fuer die Sicherheitspruefung vor Klicks)."""
+    win32gui, _, _ = _win32()
+    hwnd = win32gui.WindowFromPoint((x, y))
+    root = ctypes.windll.user32.GetAncestor(hwnd, 2)  # GA_ROOT
+    return {"hwnd": root, "titel": _title(root), "programm": _exe_of(root)}
+
+
+def screen_bounds() -> tuple[int, int, int, int]:
+    import mss
+    _dpi_aware()
+    with mss.mss() as sct:
+        v = sct.monitors[0]  # alle Monitore zusammen
+        return v["left"], v["top"], v["left"] + v["width"], v["top"] + v["height"]
+
+
+def click(x: int, y: int, button: str = "links", double: bool = False) -> None:
+    _dpi_aware()
+    down, up = {"links": (0x0002, 0x0004), "rechts": (0x0008, 0x0010)}[button]
+    user32 = ctypes.windll.user32
+    user32.SetCursorPos(int(x), int(y))
+    time.sleep(0.05)
+    for _ in range(2 if double else 1):
+        user32.mouse_event(down, 0, 0, 0, 0)
+        user32.mouse_event(up, 0, 0, 0, 0)
+        time.sleep(0.06)
+
+
+def scroll(x: int, y: int, steps: int) -> None:
+    """steps > 0 hoch, < 0 runter (je 120 = eine Raste)."""
+    _dpi_aware()
+    ctypes.windll.user32.SetCursorPos(int(x), int(y))
+    ctypes.windll.user32.mouse_event(0x0800, 0, 0, int(steps) * 120, 0)
+
+
 def start_menu_apps() -> list[dict]:
     p = subprocess.run(
         ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command",

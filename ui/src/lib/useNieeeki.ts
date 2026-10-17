@@ -43,7 +43,7 @@ function restoreAudio(audio: HTMLAudioElement | null, state: SoftStop) {
 export type Approval = { job: string; projekt: string; id: string; grund: string; detail: string };
 
 /** Ein Abtastwert der Stimmlinie: oben Nikolaj, unten nieeeki. */
-export type LevelSample = { user: number; bot: number; cut: boolean };
+export type LevelSample = { user: number; bot: number; cut: boolean; speaker: number };
 
 const VOICE_CORE_URL = process.env.NEXT_PUBLIC_VOICE_CORE_URL ?? "http://localhost:7860";
 const HISTORY = 240; // ~12 s bei 20 Hz
@@ -51,7 +51,7 @@ const HISTORY = 240; // ~12 s bei 20 Hz
 export function useNieeeki() {
   const clientRef = useRef<PipecatClient | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const levels = useRef({ user: 0, bot: 0, cut: false });
+  const levels = useRef<LevelSample>({ user: 0, bot: 0, cut: false, speaker: 0 });
   const presenceRef = useRef<Presence>("offline");
 
   const [presence, setPresenceState] = useState<Presence>("offline");
@@ -134,6 +134,9 @@ export function useNieeeki() {
             items?: { id: string; grund: string; detail: string }[];
           };
           if (msg?.type === "leiser_stopp") softStop.current.armedAt = performance.now();
+          // Wer spricht (0 = Nikolaj, 1.. = weitere Stimmen) -> Farbe im Stimmen-Rand
+          if (msg?.type === "sprecher" && typeof (msg as { index?: unknown }).index === "number")
+            levels.current.speaker = (msg as { index: number }).index;
           if (msg?.type === "canvas" && msg.item) {
             const item = msg.item;
             // Gleiche id = Aktualisierung (z. B. Fortschritt eines Entwicklungsauftrags)

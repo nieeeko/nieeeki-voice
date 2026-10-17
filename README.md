@@ -41,21 +41,22 @@ eine Oberfläche mit Stimmlinie und Canvas sowie Werkzeuge für den Windows-PC.
 
 ## Hier weitermachen
 
-1. **Gesprächstest:** natürlichere Antwortenden, Uhrzeit, „merk dir …“, Lernen nach dem Gespräch;
-   danach schnellere Sprechgeschwindigkeit (Soniox `speed` 1,1). Eine Änderung pro Test.
-2. **Websuche** für aktuelle Infos (Such-API, z. B. Brave, Tavily oder Exa).
-3. **Verlauf zusammenfassen**, damit Haiku unter 100.000 Tokens pro Prompt bleibt (darüber 5× teurer).
-4. **Canvas-Tool** `canvas_show(type, title, data)` mit Renderern: Tabelle, Dokument, BPMN (bpmn-js), Mermaid/React Flow, Code.
-5. **PC-Host anbinden:** Voice-Core ruft Host-Tools per MCP auf; kritische Aktionen über Tabelle `actions` freigeben.
-   **Zielbild:** nieeeki-Client startet mit Windows, ein leicht eingefärbter, wellenförmiger Rand über allen
-   Monitoren zeigt die Stimmen (eigene Farbe je Sprecher: nieeeki, Nikolaj, andere im Raum). Der Client hat
-   im Hintergrund vollen PC-Zugriff („öffne Chrome und Amazon, such eine Lampe fürs Wohnzimmer“), kritische
-   Aktionen weiter nur nach Freigabe. Die Web-UI wird zum Fernzugriff auf diesen Client: Canvas plus
-   Live-Stream der Monitore.
-6. **Weckwort „nieeeki“** (Porcupine oder openWakeWord), danach Desktop-App mit Tauri.
-7. **Runpod-Deployment:** WebRTC braucht UDP, Runpod leitet nur HTTP/TCP weiter → TURN-Server oder Daily-Transport nötig.
-8. **Eigene Stimme:** Soniox-Voice-Cloning (≤ 2 Min sauberer Aufnahme), A/B-Test gegen Bibliotheksstimme.
-9. **Sprechererkennung:** Stimmabdruck (ECAPA) in `speakers`, nur Nikolaj darf kritische Aktionen freigeben.
+**Erledigt seit dem ersten Test:** Websuche, Canvas (Tabelle, Code, Dokument, Mermaid), Gedächtnis mit
+Lernen während des Gesprächs, PC-Host (Programme, Fenster, Tastatur, Bildschirm ansehen, Klicken),
+Entwicklungsaufträge an Claude Code mit Freigabe-Karten, Desktop-App mit Stimmen-Rand und Autostart,
+Zusammenfassung langer Gespräche, Sprecherfarben im Rand (erster Sprecher = Nikolaj).
+
+1. **Stimmabdruck** (ECAPA) in `speakers`: Nikolaj sicher erkennen statt „wer zuerst spricht“;
+   nur seine Stimme darf Aufträge und PC-Aktionen auslösen.
+2. **Weckwort „nieeeki“** (openWakeWord mit eigenem Modell), damit kein Klick mehr nötig ist.
+3. **Eigene Stimme:** Aufnahme mit dem Vorlesetext → Soniox-Voice-Cloning, A/B-Test gegen Nina.
+4. **Freigaben auch für PC-Aktionen** (`powershell_lesen` → needs_approval) in den Freigabe-Karten.
+5. **Kalender und Mail** (zurückgestellt).
+6. **Runpod-Deployment:** WebRTC braucht UDP → TURN-Server oder Daily-Transport.
+7. **Desktop-App packen** (Installer, Startmenü-Eintrag) statt Start aus dem Repo.
+
+Start: `scripts
+ieeeki-desktop.cmd` (startet Voice-Core und Oberfläche selbst).
 
 Ausführlicher Bauplan: Doc „nieeeki – Bauplan für den eigenen Jarvis“ (Architektur, 10-Schritte-Plan, Entscheidungen).
 

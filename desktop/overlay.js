@@ -12,12 +12,16 @@ const MAX_DEPTH = 26; // px, wie weit der Saum bei voller Lautstaerke hineinreic
 const canvas = document.getElementById("edge");
 const ctx = canvas.getContext("2d");
 const level = { user: 0, bot: 0 };
+// Farben je Sprecher: 0 = Nikolaj (seeblau), dann weitere Stimmen im Raum
+const SPEAKER_RGB = [[79, 179, 199], [242, 170, 76], [110, 200, 120], [236, 112, 170], [230, 210, 90]];
+let speaker = 0;
 const target = { user: 0, bot: 0 };
 let cutFlash = 0;
 
 window.overlay.onLevels((s) => {
   target.user = s.user;
   target.bot = s.bot;
+  speaker = s.speaker || 0;
   if (s.cut) cutFlash = 1;
 });
 
@@ -56,7 +60,7 @@ function draw(t) {
     const a = Math.min(1, level[v.key] * 3.2); // Pegel kommen eher leise an
     const depth = 3 + a * MAX_DEPTH;
     const alpha = IDLE_ALPHA + a * 0.75;
-    const [r, g, b] = v.rgb;
+    const [r, g, b] = v.key === "user" ? SPEAKER_RGB[speaker % SPEAKER_RGB.length] : v.rgb;
 
     ctx.beginPath();
     pts.forEach(([x, y, nx, ny], i) => {

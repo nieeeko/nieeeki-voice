@@ -22,6 +22,10 @@ from pipecat.services.mcp_service import MCPClient
 
 HOST_DIR = Path(__file__).resolve().parent.parent / "host"
 CONNECT_TIMEOUT_SECS = 20
+LLM_TOOLS = [
+    "webseite_oeffnen", "programm_oeffnen", "powershell_lesen", "system_info", "dark_mode",
+    "fenster_auflisten", "fenster_fokussieren", "tastatur_tippen", "tasten_druecken", "maus_scrollen",
+]
 
 
 def host_client() -> MCPClient | None:
@@ -36,7 +40,8 @@ def host_client() -> MCPClient | None:
         uv = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv.exe")
         command, args = uv, ["run", "--project", str(HOST_DIR), "python", script, "--stdio"]
     params = StdioServerParameters(command=command, args=args, cwd=str(HOST_DIR))
-    return MCPClient(server_params=params)
+    # bildschirmfoto und maus_klicken ruft nur der Voice-Core (screen.py) auf, nie Claude direkt
+    return MCPClient(server_params=params, tools_filter=LLM_TOOLS)
 
 
 async def host_tools(client: MCPClient | None) -> ToolsSchema | None:

@@ -15,8 +15,9 @@ from array import array
 
 from loguru import logger
 
-from pipecat.frames.frames import Frame, InputAudioRawFrame
+from pipecat.frames.frames import Frame, InputAudioRawFrame, InterimTranscriptionFrame, TranscriptionFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 
 REPORT_SECS = 10.0
 GAP_MS = 60.0
@@ -61,6 +62,40 @@ class AudioInputMonitor(FrameProcessor):
         last = self._last
         self._reset(now)
         self._last = last
+
+
+class SpeakerTracker(FrameProcessor):
+    """Sitzt hinter der Spracherkennung und meldet der Oberflaeche, wer gerade spricht.
+
+    Soniox liefert pro Wort eine Sprecher-Kennung ("1", "2", ...). Ohne Stimmabdruck gilt: wer in der
+    Sitzung zuerst spricht, ist Nikolaj (Index 0), weitere Stimmen bekommen Index 1, 2, ...
+    Der Stimmen-Rand der Desktop-App faerbt sich danach.
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._order: dict[str, int] = {}
+        self._current: int | None = None
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, (InterimTranscriptionFrame, TranscriptionFrame)):
+            speaker = _last_speaker(frame.result)
+            if speaker is not None:
+                index = self._order.setdefault(speaker, len(self._order))
+                if index != self._current:
+                    self._current = index
+                    await self.push_frame(RTVIServerMessageFrame(data={"type": "sprecher", "index": index}))
+        await self.push_frame(frame, direction)
+
+
+def _last_speaker(result) -> str | None:
+    if not isinstance(result, list):
+        return None
+    for token in reversed(result):
+        if isinstance(token, dict) and token.get("speaker"):
+            return str(token["speaker"])
+    return None
 
 
 def _dbfs(pcm: bytes) -> float:

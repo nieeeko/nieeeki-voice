@@ -320,6 +320,63 @@ def dark_mode(enabled: bool) -> dict:
     return _powershell(cmd)
 
 
+@mcp.tool()
+def bildschirmfoto(monitor: int = 0) -> dict:
+    """Bildschirmfoto als JPEG (read). Nur fuer den Voice-Core, der es an ein Bildmodell gibt;
+    wird dem Gespraechsmodell nicht angeboten. monitor 0 = der mit dem Fenster vorne."""
+    try:
+        shot = wc.screenshot(int(monitor))
+    except ValueError as e:
+        return {"status": "rejected", "summary": str(e)}
+    _audit({"tool": "bildschirmfoto", "monitor": shot["monitor"], "risk": "read"})
+    return {"status": "success", **shot}
+
+
+def _check_point(x: int, y: int) -> dict:
+    left, top, right, bottom = wc.screen_bounds()
+    if not (left <= x < right and top <= y < bottom):
+        raise ValueError("Punkt liegt ausserhalb der Bildschirme")
+    target = wc.window_at(x, y)
+    wc.check_target(target["programm"], target["titel"])
+    return target
+
+
+@mcp.tool()
+def maus_klicken(x: int, y: int, taste: str = "links", doppelt: bool = False) -> dict:
+    """Klickt an einer Bildschirmposition (change). Nur fuer den Voice-Core (Koordinaten kommen aus
+    dem Bildmodell). Nie auf Konsolen, Admin-, Anmelde- oder Passwortfenster."""
+    if taste not in ("links", "rechts"):
+        return {"status": "rejected", "summary": "taste: links oder rechts"}
+    try:
+        x, y = int(x), int(y)
+        target = _check_point(x, y)
+    except (ValueError, TypeError) as e:
+        _audit({"tool": "maus_klicken", "x": x, "y": y, "risk": "rejected", "error": str(e)})
+        return {"status": "rejected", "summary": str(e)}
+    _audit({"tool": "maus_klicken", "x": x, "y": y, "taste": taste, "doppelt": bool(doppelt),
+            "ziel": target["titel"][:120], "programm": target["programm"], "risk": "change"})
+    wc.click(x, y, taste, bool(doppelt))
+    return {"status": "success", "summary": f"Klick bei {x},{y} in {target['titel'][:60]}"}
+
+
+@mcp.tool()
+def maus_scrollen(richtung: str = "runter", schritte: int = 5) -> dict:
+    """Scrollt im Fenster vorne (change). richtung: hoch oder runter, schritte 1-20."""
+    if richtung not in ("hoch", "runter"):
+        return {"status": "rejected", "summary": "richtung: hoch oder runter"}
+    steps = max(1, min(20, int(schritte)))
+    win32gui = wc._win32()[0]
+    left, top, right, bottom = win32gui.GetWindowRect(win32gui.GetForegroundWindow())
+    x, y = (left + right) // 2, (top + bottom) // 2
+    try:
+        target = _check_point(x, y)
+    except ValueError as e:
+        return {"status": "rejected", "summary": str(e)}
+    _audit({"tool": "maus_scrollen", "richtung": richtung, "schritte": steps, "ziel": target["titel"][:120], "risk": "change"})
+    wc.scroll(x, y, steps if richtung == "hoch" else -steps)
+    return {"status": "success", "summary": f"{steps} Schritte {richtung} in {target['titel'][:60]}"}
+
+
 def execute_approved(approval_id: str) -> dict:
     """Fuehrt eine freigegebene Aktion aus. Bewusst KEIN MCP-Werkzeug: Freigaben kommen spaeter
     aus der UI (Tabelle actions, Klick durch Nikolaj), nie vom Modell."""
