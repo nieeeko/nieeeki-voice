@@ -74,7 +74,16 @@ export function useNieeeki() {
           audioRef.current.srcObject = new MediaStream([track]);
           void audioRef.current.play();
         },
-        onError: (msg) => setError(String((msg as { data?: unknown }).data ?? "Verbindungsfehler")),
+        onError: (msg) => {
+          // data ist meist ein Objekt ({ message } / { error }); String() ergab "[object Object]".
+          const data = (msg as { data?: unknown }).data as
+            | string
+            | { message?: string; error?: string }
+            | undefined;
+          const text =
+            typeof data === "string" ? data : (data?.message ?? data?.error ?? JSON.stringify(data));
+          setError(text || "Verbindungsfehler");
+        },
       },
     });
     clientRef.current = client;
