@@ -70,7 +70,7 @@ from soft_interrupt import (
 
 load_dotenv(override=True)
 
-# EU-Endpunkte fuer Datenschutz (WAMOCON-Inhalte)
+# Standard: EU-Endpunkte (Datenschutz); .env kann auf US umstellen
 SONIOX_STT_URL = os.getenv("SONIOX_STT_URL", "wss://stt-rt.eu.soniox.com/transcribe-websocket")
 SONIOX_TTS_URL = os.getenv("SONIOX_TTS_URL", "wss://tts-rt.soniox.com/tts-websocket")
 SONIOX_VOICE = os.getenv("SONIOX_VOICE", "Nina")  # spaeter: UUID der geklonten Stimme
