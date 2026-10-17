@@ -1,0 +1,13 @@
+{
+  "name": "nieeeki-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "nieeeki als Desktop-Client: ungedrosseltes Gespraech, Stimmen-Rand ueber allen Monitoren, Autostart",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "44.5.1"
+  }
+}

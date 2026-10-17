@@ -7,6 +7,13 @@ import type { CanvasItem } from "@/components/Canvas";
 
 export type Presence = "offline" | "connecting" | "idle" | "listening" | "thinking" | "speaking";
 
+declare global {
+  interface Window {
+    /** Nur in der Desktop-App (desktop/preload.js) vorhanden. */
+    nieeekiDesktop?: { isDesktop: boolean; levels: (sample: LevelSample) => void };
+  }
+}
+
 /** Aktion eines Entwicklungsauftrags, die Nikolaj per Klick freigeben muss. */
 export type Approval = { job: string; projekt: string; id: string; grund: string; detail: string };
 
@@ -40,6 +47,7 @@ export function useNieeeki() {
     const id = setInterval(() => {
       const s = { ...levels.current };
       levels.current.cut = false;
+      window.nieeekiDesktop?.levels(s); // Stimmen-Rand der Desktop-App (sonst nicht vorhanden)
       setHistory((h) => [...h.slice(-(HISTORY - 1)), s]);
     }, 50);
     return () => clearInterval(id);
