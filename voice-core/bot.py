@@ -63,6 +63,7 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from memory import MemoryStore
 from persona import build_system_prompt
+from activity import ActivityReporter
 from audio_monitor import AudioInputMonitor, SpeakerTracker
 from learning import learn_from_session
 from dev_agent import DevAgent
@@ -299,6 +300,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             user_agg,
             soft_gate,
             llm,
+            ActivityReporter(),  # Werkzeugaufrufe live an die Oberflaeche (Zeitleiste)
             tts,
             transport.output(),
             PlaybackTracker(soft_gate),
