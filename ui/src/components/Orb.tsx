@@ -66,14 +66,16 @@ void main() {
   col = mix(col * 0.5, col * 1.2, m);
   col += vec3(0.22) * pow(max(0.0, 1.0 - r / max(radius, 0.001)), 3.0);   // Kern-Licht
 
-  // Lichtbogen beim Denken, kreisende Punkte beim Handeln
-  float ring = smoothstep(0.03, 0.0, abs(r - radius - 0.035));
-  float arc = smoothstep(0.75, 1.0, cos(a - t * 2.6)) * uThink * ring;
+  // Lichtkomet beim Denken (Kopf voraus, Schweif dahinter, leise Umlaufbahn),
+  // kreisende Lichtpunkte mit Hof beim Handeln
+  float ring = smoothstep(0.04, 0.0, abs(r - radius - 0.04));
+  float behind = mod(t * 2.6 - a, 6.2831853);
+  float arc = (0.9 * exp(-behind * 1.6) + 0.9 * exp(-(6.2831853 - behind) * 14.0) + 0.08) * ring * uThink;
   float dots = 0.0;
   for (int k = 0; k < 3; k++) {
     float ang = t * 1.4 + float(k) * 2.094;
-    vec2 pos = vec2(cos(ang), sin(ang)) * (radius + 0.07);
-    dots += smoothstep(0.022, 0.0, length(uv - pos));
+    float d = length(uv - vec2(cos(ang), sin(ang)) * (radius + 0.07));
+    dots += smoothstep(0.02, 0.0, d) + 0.35 * exp(-d * 45.0);
   }
   dots *= uAct;
 
@@ -82,7 +84,7 @@ void main() {
   vec3 halo = mix(uBotCol, voice, 0.6);
   float alpha = inside + (1.0 - inside) * glow;
   vec3 outCol = mix(halo, col, inside);
-  outCol += (arc + dots) * vec3(1.0);
+  outCol += (arc + dots) * mix(vec3(1.0), halo, 0.35);
   alpha = clamp(alpha + arc + dots, 0.0, 1.0) * uAwake;
   gl_FragColor = vec4(outCol * alpha, alpha);
 }`;

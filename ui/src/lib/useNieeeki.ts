@@ -53,6 +53,9 @@ export type Activity = {
 /** Ein Abtastwert der Stimmlinie: oben Nikolaj, unten nieeeki. */
 export type LevelSample = { user: number; bot: number; cut: boolean; speaker: number };
 
+/** Verlauf der Stimmlinie; seq zaehlt jeden neuen Abtastwert (VoiceLine zeichnet nur dann neu). */
+export type LevelHistory = { samples: LevelSample[]; seq: number };
+
 const VOICE_CORE_URL = process.env.NEXT_PUBLIC_VOICE_CORE_URL ?? "http://localhost:7860";
 const HISTORY = 240; // ~12 s bei 20 Hz
 
@@ -61,9 +64,9 @@ export function useNieeeki() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const levels = useRef<LevelSample>({ user: 0, bot: 0, cut: false, speaker: 0 });
   const presenceRef = useRef<Presence>("offline");
+  const history = useRef<LevelHistory>({ samples: [], seq: 0 });
 
   const [presence, setPresenceState] = useState<Presence>("offline");
-  const [history, setHistory] = useState<LevelSample[]>([]);
   const [userLine, setUserLine] = useState("");
   const [botLine, setBotLine] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -81,13 +84,17 @@ export function useNieeeki() {
     setPresenceState(p);
   }, []);
 
-  // 20 Hz Abtastung der Pegel fuer die Stimmlinie
+  // 20 Hz Abtastung der Pegel fuer die Stimmlinie. Bewusst ohne React-State:
+  // sonst rendert die ganze Seite (samt Canvas) 20-mal pro Sekunde neu.
   useEffect(() => {
     const id = setInterval(() => {
       const s = { ...levels.current };
       levels.current.cut = false;
       window.nieeekiDesktop?.levels(s); // Stimmen-Rand der Desktop-App (sonst nicht vorhanden)
-      setHistory((h) => [...h.slice(-(HISTORY - 1)), s]);
+      const h = history.current;
+      h.samples.push(s);
+      if (h.samples.length > HISTORY) h.samples.shift();
+      h.seq++;
     }, 50);
     return () => clearInterval(id);
   }, []);
