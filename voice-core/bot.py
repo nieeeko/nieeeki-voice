@@ -395,4 +395,9 @@ async def bot(runner_args: RunnerArguments):
 if __name__ == "__main__":
     from pipecat.runner.run import main
 
+    # Nur die eigene Oberflaeche darf Sitzungen starten. Ohne Liste erlaubt der Runner jede
+    # Herkunft (CORS *): eine fremde Webseite im Browser koennte ueber localhost:7860 eine
+    # Sitzung aufbauen und so die PC-Werkzeuge ausloesen. Ein leerer Wert oeffnet das nicht.
+    if not os.getenv("PIPECAT_ALLOWED_ORIGINS", "").strip():
+        os.environ["PIPECAT_ALLOWED_ORIGINS"] = "http://localhost:3000,http://127.0.0.1:3000"
     main()
