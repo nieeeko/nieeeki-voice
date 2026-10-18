@@ -138,6 +138,22 @@ class OpenWithTests(unittest.TestCase):
         self.assertEqual(result["status"], "rejected")
 
 
+class DuplicateTests(unittest.TestCase):
+    def test_same_action_twice_runs_once(self):
+        host._recent_actions.clear()
+        with mock.patch.object(host, "_launch") as launch,              mock.patch.object(host, "resolve_app", return_value="chrome.exe"),              mock.patch.object(host.wc, "list_windows", return_value=[]):
+            first = host.webseite_oeffnen("https://www.amazon.de/s?k=e-bike")
+            second = host.webseite_oeffnen("https://www.amazon.de/s?k=e-bike")
+            third = host.webseite_oeffnen("https://www.amazon.de/s?k=lampe")
+        self.assertEqual(first["status"], "success")
+        self.assertEqual(second["status"], "duplicate")
+        self.assertEqual(third["status"], "success")
+        self.assertEqual(launch.call_count, 2)
+
+    def tearDown(self):
+        host._recent_actions.clear()  # andere Tests duerfen dieselben Aktionen ausfuehren
+
+
 class OpenTests(unittest.TestCase):
     def test_rejected_url_launches_nothing(self):
         with mock.patch.object(host, "_launch") as launch:

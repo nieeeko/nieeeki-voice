@@ -144,6 +144,13 @@ function createMainWindow() {
   });
 }
 
+// Schleierbreite in geraeteunabhaengigen Pixeln: 96 DIP entsprechen nominal 2,54 cm (Windows rechnet
+// Skalierung schon ein). 5-8 cm gewuenscht, Standard 6,5 cm; NIEEEKI_VEIL_CM aendert das.
+function veilWidthDip() {
+  const cm = Math.min(12, Math.max(2, Number(process.env.NIEEEKI_VEIL_CM) || 6.5));
+  return Math.round((cm * 96) / 2.54);
+}
+
 function createOverlays() {
   overlays.forEach((w) => !w.isDestroyed() && w.destroy());
   overlays = screen.getAllDisplays().map((display) => {
@@ -169,7 +176,7 @@ function createOverlays() {
     win.setIgnoreMouseEvents(true); // Klicks gehen durch auf darunterliegende Programme
     win.setAlwaysOnTop(true, "screen-saver");
     win.setVisibleOnAllWorkspaces(true);
-    win.loadFile(path.join(__dirname, "overlay.html"));
+    win.loadFile(path.join(__dirname, "overlay.html"), { query: { veil: String(veilWidthDip()) } });
     win.once("ready-to-show", () => borderOn && win.showInactive());
     return win;
   });

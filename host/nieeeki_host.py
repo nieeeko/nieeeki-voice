@@ -24,6 +24,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -86,6 +87,26 @@ def _audit(event: dict) -> None:
     event["ts"] = datetime.now(timezone.utc).isoformat()
     with AUDIT_LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+
+DUPLICATE_WINDOW_SECS = 6.0
+_recent_actions: dict[str, float] = {}
+
+
+def _duplicate(tool: str, **args) -> dict | None:
+    """Gleiche Aktion mit gleichen Argumenten innerhalb weniger Sekunden: nicht nochmal ausfuehren.
+    (Log 18.10.: Claude drueckte ctrl+2 zweimal direkt hintereinander.)"""
+    key = tool + json.dumps(args, sort_keys=True, ensure_ascii=False)
+    now = time.monotonic()
+    for k, t in list(_recent_actions.items()):
+        if now - t > DUPLICATE_WINDOW_SECS:
+            del _recent_actions[k]
+    if key in _recent_actions:
+        _audit({"tool": tool, "risk": "duplicate", **{k: str(v)[:120] for k, v in args.items()}})
+        return {"status": "duplicate", "summary": "Genau das wurde gerade schon ausgefuehrt und wird nicht "
+                "wiederholt. Will Nikolaj es nochmal, sagt er es."}
+    _recent_actions[key] = now
+    return None
 
 
 def _clean(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
@@ -181,6 +202,8 @@ def webseite_oeffnen(url: str, browser: str = "chrome") -> dict:
     except ValueError as e:
         _audit({"tool": "webseite_oeffnen", "url": str(url)[:200], "risk": "rejected", "error": str(e)})
         return {"status": "rejected", "summary": str(e)}
+    if dup := _duplicate("webseite_oeffnen", url=safe_url):
+        return dup
     _audit({"tool": "webseite_oeffnen", "url": safe_url, "browser": browser, "risk": "change"})
     _launch(exe, [safe_url])
     return {"status": "success", "summary": f"{safe_url} in {browser} geoeffnet"}
@@ -201,6 +224,8 @@ def programm_oeffnen(name: str) -> dict:
     except ValueError as e:
         _audit({"tool": "programm_oeffnen", "name": str(name)[:50], "risk": "rejected", "error": str(e)})
         return {"status": "rejected", "summary": str(e)}
+    if dup := _duplicate("programm_oeffnen", name=label):
+        return dup
     _audit({"tool": "programm_oeffnen", "name": label, "risk": "change"})
     if target:
         _launch(target)
@@ -247,6 +272,8 @@ def oeffnen_mit(pfad: str, programm: str = "vscode") -> dict:
     except ValueError as e:
         _audit({"tool": "oeffnen_mit", "pfad": str(pfad)[:200], "risk": "rejected", "error": str(e)})
         return {"status": "rejected", "summary": str(e)}
+    if dup := _duplicate("oeffnen_mit", pfad=str(path), programm=app_name):
+        return dup
     _audit({"tool": "oeffnen_mit", "pfad": str(path), "programm": app_name, "risk": "change"})
     _launch(exe, [str(path)])  # argv, keine Shell
     return {"status": "success", "summary": f"{path.name} in {app_name} geoeffnet"}
@@ -295,6 +322,8 @@ def tastatur_tippen(text: str, fenster: str = "") -> dict:
     except ValueError as e:
         _audit({"tool": "tastatur_tippen", "fenster": str(fenster)[:80], "risk": "rejected", "error": str(e)})
         return {"status": "rejected", "summary": str(e)}
+    if dup := _duplicate("tastatur_tippen", text=text, ziel=target["titel"]):
+        return dup
     _audit({"tool": "tastatur_tippen", "ziel": target["titel"][:120], "programm": target["programm"],
             "zeichen": len(text), "risk": "change"})
     wc.type_text(text)
@@ -311,6 +340,8 @@ def tasten_druecken(kombination: str, fenster: str = "") -> dict:
     except ValueError as e:
         _audit({"tool": "tasten_druecken", "kombination": str(kombination)[:40], "risk": "rejected", "error": str(e)})
         return {"status": "rejected", "summary": str(e)}
+    if dup := _duplicate("tasten_druecken", kombination=kombination.lower(), ziel=target["titel"]):
+        return dup
     _audit({"tool": "tasten_druecken", "kombination": kombination, "ziel": target["titel"][:120], "risk": "change"})
     wc.press(codes)
     return {"status": "success", "summary": f"{kombination} in {target['titel'][:60]} gedrueckt"}

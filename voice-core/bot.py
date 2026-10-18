@@ -107,6 +107,20 @@ NIEEEKI_GREETING = os.getenv("NIEEEKI_GREETING", "Hi Nikolaj, ich bin da.")
 # Haelt Claude Nikolajs Satz fuer unvollstaendig, wartet sie so lange auf den Rest (Sekunden).
 SMART_TURN_STOP_SECS = float(os.getenv("SMART_TURN_STOP_SECS") or 1.0)
 TURN_INCOMPLETE_SHORT_SECS = float(os.getenv("TURN_INCOMPLETE_SHORT_SECS") or 1.5)
+# Nach einer Pause fragt Pipecat Claude erneut. Die englischen Standardtexte fuehrten dazu, dass
+# Claude nur den Marker "●" ohne Text schickte: nieeeki blieb stumm.
+PAUSE_SHORT_PROMPT = (
+    "Nikolaj hat mitten im Satz kurz pausiert. Lies seine letzten Bruchstuecke zusammen. Ist klar, "
+    "was er will, erledige es jetzt (auch mit Werkzeug). Sonst sag einen ganz kurzen deutschen Satz, "
+    "der ihn weiterreden laesst. WICHTIG: Beginne mit ● und einem Leerzeichen, dann dein Text oder "
+    "Werkzeugaufruf. Nie ◐ oder ○, nie ● allein. Beispiel: ● Ja, das Pop-up, und dann?"
+)
+PAUSE_LONG_PROMPT = (
+    "Nikolaj ist seit ein paar Sekunden still. Ist aus dem Zusammenhang klar, was er will, erledige "
+    "es jetzt. Sonst frag in einem kurzen deutschen Satz freundlich nach. WICHTIG: Beginne mit ● "
+    "und einem Leerzeichen, dann dein Text. Nie ◐ oder ○, nie ● allein. Beispiel: ● Bin noch da, "
+    "sag einfach Bescheid."
+)
 TURN_INCOMPLETE_LONG_SECS = float(os.getenv("TURN_INCOMPLETE_LONG_SECS") or 3.0)  # 8 s fuehlte sich wie ein Haenger an
 # Weiche Unterbrechung: nach einem Einwurf spricht sie den Satz zu Ende, hoechstens aber
 # das laufende Wort plus so viele weitere Woerter (nie mitten im Wort).
@@ -119,6 +133,30 @@ INTERRUPTED_NOTE = (
     "wo du aufgehoert hast. Reagiere natuerlich auf den Einwurf und knuepfe dann, falls noch "
     "relevant, an deinem letzten Gedanken an - nicht von vorn beginnen.]"
 )
+
+# Profil (Fakten, Vorlieben, Sprechweise) zwischenspeichern: die Supabase-Abfrage dauerte vor jedem
+# Gespraechsstart ~1,7 s. Ab dem zweiten Gespraech sofort aus dem Speicher, frisch im Hintergrund.
+_profile_cache: list[str] = []
+_profile_loaded = False
+
+
+async def cached_profile(memory) -> list[str]:
+    global _profile_loaded
+
+    async def refresh():
+        facts = await memory.recall_profile()
+        if facts:
+            _profile_cache[:] = facts
+
+    if not _profile_loaded:
+        await refresh()
+        _profile_loaded = True
+    else:
+        task = asyncio.create_task(refresh())
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
+    return list(_profile_cache)
+
 
 # Referenzen halten, sonst raeumt der Garbage Collector laufende Lern-Tasks weg.
 _background_tasks: set[asyncio.Task] = set()
@@ -155,7 +193,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         settings=SonioxTTSService.Settings(voice=SONIOX_VOICE, language=Language.DE),
     )
 
-    system_prompt = build_system_prompt(await memory.recall_profile())
+    system_prompt = build_system_prompt(await cached_profile(memory))
 
     llm = AnthropicLLMService(
         api_key=os.environ["ANTHROPIC_API_KEY"],
@@ -238,6 +276,8 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
                         config=UserTurnCompletionConfig(
                             incomplete_short_timeout=TURN_INCOMPLETE_SHORT_SECS,
                             incomplete_long_timeout=TURN_INCOMPLETE_LONG_SECS,
+                            incomplete_short_prompt=PAUSE_SHORT_PROMPT,
+                            incomplete_long_prompt=PAUSE_LONG_PROMPT,
                         )
                     ),
                 ],
@@ -308,7 +348,9 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         learned_upto = end
         if saved and live:
             # Sofort anwenden: neuer System-Prompt mit allem, was sie jetzt ueber Nikolaj weiss.
-            new_prompt = build_system_prompt(await memory.recall_profile())
+            facts = await memory.recall_profile()
+            _profile_cache[:] = facts
+            new_prompt = build_system_prompt(facts)
             await task.queue_frame(
                 LLMUpdateSettingsFrame(delta=LLMSettings(system_instruction=new_prompt))
             )
@@ -322,11 +364,12 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(_transport, _client):
-        await memory.start_session(channel=os.getenv("NIEEEKI_CHANNEL", "web"))
         # Kurze Begruessung waermt die Sprachausgabe auf: der erste Soniox-Satz einer
         # Verbindung brauchte einmal 10 s. Leer setzen, um sie abzuschalten.
         if NIEEEKI_GREETING:
             await task.queue_frames([TTSSpeakFrame(NIEEEKI_GREETING)])
+        # Sitzung erst nach der Begruessung anlegen (Supabase-Insert kostete ~0,6 s vor dem ersten Ton)
+        await memory.start_session(channel=os.getenv("NIEEEKI_CHANNEL", "web"))
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(_transport, _client):
