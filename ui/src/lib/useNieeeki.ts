@@ -42,6 +42,14 @@ function restoreAudio(audio: HTMLAudioElement | null, state: SoftStop) {
 /** Aktion eines Entwicklungsauftrags, die Nikolaj per Klick freigeben muss. */
 export type Approval = { job: string; projekt: string; id: string; grund: string; detail: string };
 
+/** Ein Werkzeugaufruf von nieeeki fuer die Aktivitaets-Zeitleiste (activity.py im Voice-Core). */
+export type Activity = {
+  id: string;
+  name: string;
+  detail: string;
+  status: "laeuft" | "fertig" | "abgelehnt" | "fehler";
+};
+
 /** Ein Abtastwert der Stimmlinie: oben Nikolaj, unten nieeeki. */
 export type LevelSample = { user: number; bot: number; cut: boolean; speaker: number };
 
@@ -61,6 +69,7 @@ export function useNieeeki() {
   const [error, setError] = useState<string | null>(null);
   const [canvasItems, setCanvasItems] = useState<CanvasItem[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [activities, setActivities] = useState<Activity[]>([]);
 
   // Weicher Stopp bei Unterbrechungen (Server schickt "leiser_stopp")
   const softStop = useRef<SoftStop>({ armedAt: null, fading: false });
@@ -148,6 +157,13 @@ export function useNieeeki() {
               return next;
             });
           }
+          if (msg?.type === "aktivitaet") {
+            const a = msg as unknown as Activity;
+            if (a.id && a.name) {
+              // gleiche id = Statuswechsel; neueste oben, hoechstens 6 Eintraege
+              setActivities((list) => [a, ...list.filter((x) => x.id !== a.id)].slice(0, 6));
+            }
+          }
           if (msg?.type === "freigaben" && msg.job && msg.items) {
             const { job, projekt = "" } = msg;
             const fresh = msg.items.map((it) => ({ ...it, job, projekt }));
@@ -190,5 +206,21 @@ export function useNieeeki() {
     setApprovals((list) => list.filter((x) => !(x.job === a.job && x.id === a.id)));
   }, []);
 
-  return { presence, history, userLine, botLine, error, canvasItems, approvals, decide, connect, disconnect };
+  const acting = activities.some((a) => a.status === "laeuft");
+
+  return {
+    presence,
+    history,
+    levels,
+    userLine,
+    botLine,
+    error,
+    canvasItems,
+    approvals,
+    activities,
+    acting,
+    decide,
+    connect,
+    disconnect,
+  };
 }

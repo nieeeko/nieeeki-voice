@@ -207,3 +207,109 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .wordmark { transition: none; }
 }
+
+/* =====================================================================
+   Lebendige Oberflaeche: atmender Hintergrund, Glas, Kugel, Zeitleiste.
+   Alles reagiert auf data-presence (offline/connecting/idle/listening/
+   thinking/speaking) und data-acting (Werkzeug laeuft).
+   ===================================================================== */
+.shell { position: relative; isolation: isolate; }
+
+.aurora { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+.aurora span {
+  position: absolute; width: 60vmax; height: 60vmax; border-radius: 50%;
+  filter: blur(90px); opacity: 0.32; mix-blend-mode: normal;
+  animation: drift 28s ease-in-out infinite alternate;
+  transition: opacity 1.2s ease, background 1.2s ease;
+}
+.aurora span:nth-child(1) { left: -18vmax; top: -22vmax; background: var(--voice-bot); }
+.aurora span:nth-child(2) { right: -22vmax; bottom: -26vmax; background: var(--voice-user); animation-duration: 34s; animation-delay: -8s; }
+.aurora span:nth-child(3) { left: 30%; top: 40%; width: 36vmax; height: 36vmax; background: var(--voice-bot); opacity: 0.16; animation-duration: 22s; animation-delay: -4s; }
+.shell[data-presence="offline"] .aurora span { opacity: 0.12; }
+.shell[data-presence="listening"] .aurora span:nth-child(2) { opacity: 0.45; }
+.shell[data-presence="speaking"] .aurora span:nth-child(1),
+.shell[data-presence="speaking"] .aurora span:nth-child(3) { opacity: 0.45; }
+.shell[data-presence="thinking"] .aurora span { animation-duration: 9s; }
+@keyframes drift {
+  0% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(6vmax, 4vmax, 0) scale(1.12); }
+  100% { transform: translate3d(-4vmax, -3vmax, 0) scale(0.94); }
+}
+
+.presence {
+  background: color-mix(in srgb, var(--panel) 62%, transparent);
+  backdrop-filter: blur(22px) saturate(1.2);
+  border-right: 1px solid color-mix(in srgb, var(--rule) 70%, transparent);
+  gap: 16px;
+}
+
+.state {
+  display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px; border-radius: 999px;
+  font-size: 15px; background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.state-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-soft); }
+.presence[data-presence="idle"] .state-dot { background: var(--voice-bot); animation: breathe 5s ease-in-out infinite; }
+.presence[data-presence="listening"] .state-dot { background: var(--voice-user); animation: breathe 1.2s ease-in-out infinite; }
+.presence[data-presence="thinking"] .state-dot { background: var(--voice-bot); animation: breathe 0.7s ease-in-out infinite; }
+.presence[data-presence="speaking"] .state-dot { background: var(--voice-bot); animation: breathe 0.9s ease-in-out infinite; }
+.presence[data-presence="connecting"] .state-dot { background: var(--voice-user); animation: breathe 0.6s ease-in-out infinite; }
+.shell[data-acting="true"] .state-dot { background: var(--voice-user); animation: breathe 0.5s ease-in-out infinite; }
+@keyframes breathe { 0%, 100% { transform: scale(1); opacity: 0.6; } 50% { transform: scale(1.5); opacity: 1; } }
+
+.orb-wrap { width: min(100%, 340px); aspect-ratio: 1; margin: -4px auto 0; position: relative; }
+.orb { width: 100%; height: 100%; display: block; }
+
+.voice-line { height: 64px; background: color-mix(in srgb, var(--ink) 5%, transparent); }
+
+.lines { min-height: 96px; }
+.lines p { animation: rise 0.35s ease-out both; }
+.line-user { font-size: 16px; }
+.line-bot { font-size: 19px; line-height: 1.45; }
+
+/* Aktivitaets-Zeitleiste */
+.activity ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.activity-item {
+  display: grid; grid-template-columns: 10px 1fr auto; align-items: center; gap: 10px;
+  padding: 8px 12px; border-radius: 10px; font-size: 14px;
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  animation: rise 0.3s ease-out both;
+}
+.activity-item:not(:first-child) { opacity: 0.62; }
+.activity-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-soft); }
+.activity-item[data-status="laeuft"] .activity-dot { background: var(--voice-user); animation: breathe 0.6s ease-in-out infinite; }
+.activity-item[data-status="fertig"] .activity-dot { background: var(--voice-bot); }
+.activity-item[data-status="abgelehnt"] .activity-dot,
+.activity-item[data-status="fehler"] .activity-dot { background: var(--cut); }
+.activity-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.activity-detail { color: var(--ink-soft); }
+.activity-status { color: var(--ink-soft); font-size: 12px; }
+
+.wake { margin-top: auto; transition: transform 0.2s ease, box-shadow 0.3s ease; }
+.wake:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 8px 30px color-mix(in srgb, var(--voice-bot) 35%, transparent); }
+
+/* Canvas: Glas, sanftes Erscheinen, lebendige Leerflaeche */
+.canvas-item {
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+  backdrop-filter: blur(18px) saturate(1.15);
+  border: 1px solid color-mix(in srgb, var(--rule) 60%, transparent);
+  box-shadow: 0 20px 60px -30px color-mix(in srgb, var(--voice-bot) 45%, transparent);
+  animation: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.canvas-tab { transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease; }
+.canvas-tab:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.kinds li {
+  padding: 12px 14px; border-radius: 12px; border-left-width: 3px;
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  animation: glow 7.2s ease-in-out infinite;
+  transition: transform 0.2s ease;
+}
+.kinds li:hover { transform: translateY(-2px); }
+@keyframes glow {
+  0%, 80%, 100% { border-left-color: var(--rule); }
+  10%, 30% { border-left-color: var(--voice-bot); box-shadow: 0 0 0 1px color-mix(in srgb, var(--voice-bot) 25%, transparent); }
+}
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora span, .state-dot, .lines p, .activity-item, .canvas-item, .kinds li { animation: none !important; }
+}
