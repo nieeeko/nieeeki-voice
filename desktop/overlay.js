@@ -58,15 +58,17 @@ float fbm(vec3 p) {
 
 void main() {
   vec2 p = gl_FragCoord.xy;
-  float d = min(min(p.x, uRes.x - p.x), min(p.y, uRes.y - p.y));  // Abstand zur naechsten Kante
-  if (d > uVeil * 1.6) { gl_FragColor = vec4(0.0); return; }      // Mitte bleibt frei
+  float dx = min(p.x, uRes.x - p.x);
+  float dy = min(p.y, uRes.y - p.y);
+  if (min(dx, dy) > uVeil * 1.6) { gl_FragColor = vec4(0.0); return; }  // Mitte bleibt frei
+  // weiches Minimum statt min(): runde Ecken ohne diagonale Naht
+  float k = uVeil * 0.35;
+  float d = -k * log(exp(-dx / k) + exp(-dy / k));
 
   float speak = clamp(max(uUser, uBot), 0.0, 1.0);
-  vec2 c = p - uRes * 0.5;
-  float ang = atan(c.y, c.x);
-  // fliessendes Muster entlang des Rands, nahtlos ueber cos/sin, schneller beim Sprechen
-  vec3 q = vec3(cos(ang) * 2.6, sin(ang) * 2.6, uTime * (0.10 + 0.35 * speak));
-  float n = fbm(q + vec3(d / uVeil, d / uVeil * 0.5, 0.0));
+  // fliessendes, organisches Muster in Bildschirmkoordinaten, schneller beim Sprechen
+  vec3 q = vec3(p / (uVeil * 1.3), uTime * (0.10 + 0.35 * speak));
+  float n = fbm(q);
 
   // Breite: atmet im Leerlauf, waechst mit der Stimme, wird vom Muster gewellt
   float w = uVeil * (0.62 + 0.10 * uBreath + 0.38 * speak) * (0.72 + 0.56 * n);
