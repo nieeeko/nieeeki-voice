@@ -47,7 +47,7 @@ from pipecat.runner.utils import create_transport
 from pipecat.services.anthropic.llm import AnthropicLLMService
 from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
 from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
-from pipecat.services.soniox.stt import SonioxSTTService
+from pipecat.services.soniox.stt import SonioxContextObject, SonioxSTTService
 from pipecat.turns.user_stop.deferred_user_turn_stop_strategy import deferred
 from pipecat.turns.user_stop.llm_turn_completion_user_turn_stop_strategy import (
     LLMTurnCompletionUserTurnStopStrategy,
@@ -90,6 +90,15 @@ if sys.platform == "win32":
 SONIOX_STT_URL = os.getenv("SONIOX_STT_URL", "wss://stt-rt.eu.soniox.com/transcribe-websocket")
 SONIOX_TTS_URL = os.getenv("SONIOX_TTS_URL", "wss://tts-rt.soniox.com/tts-websocket")
 SONIOX_VOICE = os.getenv("SONIOX_VOICE", "Nina")  # spaeter: UUID der geklonten Stimme
+# Fachbegriffe fuer die Spracherkennung: Programme und Befehle, die Nikolaj oft sagt. Am 18.10. kam
+# "öffne mal Opera" als "erste Mal Opera" an, und nieeeki hat Opera nicht geoeffnet. Bewusst nur
+# "terms", kein "general": ein allgemeiner Kontext (domain=Sprachassistent) drueckte seine Woerter
+# in fremde Saetze. .env: SONIOX_TERMS (kommagetrennt), leer = ohne Fachbegriffe.
+DEFAULT_STT_TERMS = (
+    "nieeeki, öffne mal, Opera, Opera GX, WhatsApp, VS Code, Visual Studio Code, Claude Code, "
+    "Chrome, Spotify, Explorer, VPN, Canvas, Dark Mode, SQL-Statement, Supabase, Vercel, GitHub"
+)
+STT_TERMS = [t.strip() for t in os.getenv("SONIOX_TERMS", DEFAULT_STT_TERMS).split(",") if t.strip()]
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-5-5")
 # Woerter ohne Rueckmeldelaute, ab denen sie unterbrochen wird ("Doch" reicht, "mhm" nicht)
 MIN_INTERRUPT_WORDS = int(os.getenv("MIN_INTERRUPT_WORDS", "1"))
@@ -183,8 +192,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             language_hints=[Language.DE],
             language_hints_strict=True,
             enable_speaker_diarization=True,  # mehrere Personen im Raum -> Sprecher-Labels
-            # Kein Soniox-Kontext: "domain=Sprachassistent" hat die Erkennung so stark
-            # beeinflusst, dass aus "SQL-Statement" "Sprachassistentin" wurde.
+            context=SonioxContextObject(terms=STT_TERMS) if STT_TERMS else None,
         ),
     )
 
