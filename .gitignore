@@ -14,3 +14,4 @@ webrtc_internals_dump*.txt
 voice-core/.jobs/
 desktop/node_modules/
 desktop/logs/
+.vscode
