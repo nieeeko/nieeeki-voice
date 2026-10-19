@@ -84,6 +84,11 @@ Lernen
 """
 
 
+def greeting_for(body: object, normal: str, wake: str) -> str:
+    """Begruessung je nach Anlass: per Weckwort nur kurz ("Ja?"), Nikolaj will gleich etwas sagen."""
+    return wake if isinstance(body, dict) and body.get("anlass") == "weckwort" else normal
+
+
 def build_system_prompt(profile_facts: list[str]) -> str:
     if not profile_facts:
         return BASE_PROMPT

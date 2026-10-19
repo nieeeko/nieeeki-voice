@@ -1,0 +1,70 @@
+# Weckwort "nieeeki" fuer livekit-wakeword 0.3.0 (Schema WakeWordConfig). Ablauf: wakeword/README.md
+# Pfade gelten im Container: /work ist das Docker-Volume, /cfg diese Datei (nur lesend).
+model_name: nieeeki
+
+# Piper spricht Englisch: "neeky" klingt wie "Nieki" (espeak: nˈiːki), "nicky" wie "Niki" (nˈɪki).
+# Geprueft im Container; "neeki"/"nieki" zerlegt das Woerterbuch falsch ("nee kai").
+target_phrases: ["neeky", "nicky"]
+
+n_samples: 20000
+n_samples_val: 3000
+n_background_samples: 2000
+n_background_samples_val: 500
+tts_batch_size: 50 # 8 GB GPU (RTX 4060)
+
+# Klingt aehnlich, soll aber NICHT wecken. Woerter mit kurzem i (picky, mickey, ...) erzeugt das
+# Woerterbuch selbst aus "nicky"; fuer "neeky" kennt es keine Lautschrift, darum hier von Hand.
+custom_negative_phrases:
+  - "niko"
+  - "nico"
+  - "nikolai"
+  - "nicole"
+  - "nikita"
+  - "nike"
+  - "nick"
+  - "nickel"
+  - "sneaky"
+  - "cheeky"
+  - "leaky"
+  - "freaky"
+  - "squeaky"
+  - "creaky"
+  - "need key"
+  - "neat key"
+  - "honey"
+  - "money"
+  - "monica"
+  - "mickey"
+
+noise_scales: [0.98]
+noise_scale_ws: [0.98]
+length_scales: [0.75, 1.0, 1.25]
+slerp_weights: [0.2, 0.35, 0.5, 0.65, 0.8]
+
+data_dir: /work/data
+output_dir: /work/output
+
+augmentation:
+  clip_duration: 2.0
+  batch_size: 16
+  rounds: 3
+  background_paths: [/work/data/backgrounds]
+  rir_paths: [/work/data/rirs]
+
+model:
+  model_type: conv_attention
+  model_size: medium
+
+steps: 60000
+learning_rate: 0.0001
+weight_decay: 0.01
+label_smoothing: 0.05
+max_negative_weight: 3000
+# Ziel: hoechstens ein Fehlalarm in fuenf Stunden Gerede/Geraeusch (Validierung mit ACAV100M)
+target_fp_per_hour: 0.2
+
+batch_n_per_class:
+  positive: 50
+  adversarial_negative: 50
+  ACAV100M_sample: 1024
+  background_noise: 50

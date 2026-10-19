@@ -88,6 +88,17 @@ nieeeki als App auf dem iPhone (ohne App Store).
 
 Grenzen: iOS pausiert die App im Hintergrund; das Gespräch läuft nur, solange sie vorn ist.
 
+## Weckwort „nieeeki“ (Desktop-App)
+
+- „nieeeki“ sagen → sie antwortet „Ja?“ → Auftrag sagen. Nach 45 s Stille legt sie von selbst auf und
+  lauscht wieder, aber nie mitten in einer Aktion, bei offener Freigabe, laufendem Entwicklungsauftrag
+  oder Live-Bild. Per Klick begonnene Gespräche bleiben offen wie bisher.
+- Der Lauscher (`voice-core/wake.py`) läuft lokal: kein Ton verlässt den PC, nichts wird gespeichert,
+  etwa 3 % eines CPU-Kerns. Während eines Gesprächs pausiert er und gibt das Mikrofon frei.
+- Tray: Schalter „Weckwort "nieeeki"“. Schwelle in `voice-core/.env` (`NIEEEKI_WAKE_THRESHOLD`).
+- Das Modell `voice-core/models/nieeeki.onnx` ist selbst trainiert (synthetische Stimmen), siehe
+  [wakeword/README.md](wakeword/README.md).
+
 ## Anmeldung und Online-Zugang
 
 - Die Oberfläche (lokal, Desktop-App und `https://nieeeki.nieeeko.com`) beginnt mit einer Anmeldung:

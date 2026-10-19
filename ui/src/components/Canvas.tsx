@@ -6,7 +6,7 @@ import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "re
 export type CanvasItem =
   | { id?: string | null; kind: "tabelle"; title: string; columns: string[]; rows: string[][] }
   | { id?: string | null; kind: "code"; title: string; text: string; language?: string }
-  | { id?: string | null; kind: "dokument"; title: string; text: string }
+  | { id?: string | null; kind: "dokument"; title: string; text: string; laeuft?: boolean } // laeuft: Entwicklungsauftrag in Arbeit
   | { id?: string | null; kind: "mermaid"; title: string; text: string };
 
 const KIND_LABEL: Record<CanvasItem["kind"], string> = {

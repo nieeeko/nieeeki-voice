@@ -56,6 +56,11 @@ function readConfig() {
   }
 }
 
+function writeConfig(patch) {
+  fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify({ ...readConfig(), ...patch }, null, 2));
+}
+
 function resolveRepo() {
   const candidates = app.isPackaged
     ? [process.env.NIEEEKI_REPO, readConfig().repo, path.join(os.homedir(), "Projekte", "nieeeki-voice")]
@@ -73,8 +78,7 @@ function resolveRepo() {
     );
     return null;
   }
-  fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify({ ...readConfig(), repo: picked }, null, 2));
+  writeConfig({ repo: picked });
   return picked;
 }
 
@@ -85,6 +89,11 @@ function logDir() {
 }
 
 // ---------- Dienste (Voice-Core, UI) ----------
+function uvCommand() {
+  const uv = path.join(os.homedir(), ".local", "bin", "uv.exe");
+  return fs.existsSync(uv) ? uv : "uv";
+}
+
 function isUp(url) {
   return new Promise((resolve) => {
     const req = http.get(url, (res) => {
@@ -141,8 +150,7 @@ async function ensureServices() {
   killStale("voice-core");
   await new Promise((r) => setTimeout(r, 800));
   if (!(await isUp(VOICE_CORE_URL))) {
-    const uv = path.join(os.homedir(), ".local", "bin", "uv.exe");
-    startService("voice-core", fs.existsSync(uv) ? uv : "uv", ["run", "bot.py"], path.join(REPO, "voice-core"));
+    startService("voice-core", uvCommand(), ["run", "bot.py"], path.join(REPO, "voice-core"));
   }
   if (!(await isUp(UI_URL))) {
     const nextBin = path.join(REPO, "ui", "node_modules", "next", "dist", "bin", "next");
@@ -275,6 +283,83 @@ function updateOverlayVisibility() {
   overlays.forEach((w) => !w.isDestroyed() && (show ? w.showInactive() : w.hide()));
 }
 
+// ---------- Weckwort "nieeeki" ----------
+// voice-core/wake.py lauscht lokal am Mikrofon, kein Ton verlaesst den PC. Ein Treffer geht an die
+// Oberflaeche, die dann das Gespraech aufbaut; solange es laeuft, pausiert der Lauscher (Mikrofon frei).
+let wakeProc = null;
+let wakeRestart = null;
+let conversationActive = false;
+
+function wakeModelPath() {
+  return process.env.NIEEEKI_WAKE_MODEL || (REPO ? path.join(REPO, "voice-core", "models", "nieeeki.onnx") : null);
+}
+
+function wakeAvailable() {
+  const model = wakeModelPath();
+  return Boolean(REPO && model && fs.existsSync(model));
+}
+
+function wakeEnabled() {
+  return readConfig().weckwort !== false; // Standard an; der Tray-Schalter merkt sich "aus"
+}
+
+function startWake() {
+  clearTimeout(wakeRestart);
+  if (wakeProc || quitting || !wakeAvailable() || !wakeEnabled()) return;
+  const dir = logDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const log = fs.openSync(path.join(dir, "wake.log"), "a");
+  const proc = spawn(uvCommand(), ["run", "wake.py"], {
+    cwd: path.join(REPO, "voice-core"),
+    windowsHide: true,
+    stdio: ["pipe", "pipe", log],
+    env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
+  });
+  fs.closeSync(log); // der Kindprozess hat seine eigene Kopie
+  wakeProc = proc;
+  proc.stdin.on("error", () => {}); // Lauscher schon weg: Schreiben ins Leere ist egal
+  if (conversationActive) proc.stdin.write("pause\n");
+  let buffer = "";
+  proc.stdout.on("data", (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop();
+    for (const line of lines) onWakeLine(line);
+  });
+  proc.on("exit", (code) => {
+    if (wakeProc !== proc) return; // absichtlich beendet oder schon ersetzt
+    wakeProc = null;
+    // 2 = kein Modell: nicht neu starten. Sonst nach 5 s wieder (z. B. Mikrofon kurz weg)
+    if (!quitting && code !== 2) wakeRestart = setTimeout(startWake, 5000);
+  });
+}
+
+function stopWake() {
+  clearTimeout(wakeRestart);
+  const proc = wakeProc;
+  wakeProc = null;
+  if (proc) killTree(proc.pid); // "uv run" startet Python als Kindprozess
+}
+
+function onWakeLine(line) {
+  let msg;
+  try {
+    msg = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (msg?.fehler) console.log(`Weckwort: ${msg.fehler}`);
+  if (!msg?.weckwort || conversationActive || !mainWin || mainWin.isDestroyed()) return;
+  mainWin.webContents.send("wake", { score: Number(msg.score) || 0 });
+}
+
+// Die Oberflaeche meldet, ob gerade ein Gespraech laeuft: dann pausiert der Lauscher
+ipcMain.on("conversation", (event, active) => {
+  if (!mainWin || event.sender !== mainWin.webContents) return; // nur das Hauptfenster darf senden
+  conversationActive = Boolean(active);
+  wakeProc?.stdin.write(conversationActive ? "pause\n" : "weiter\n");
+});
+
 // Nicht gepackte App: Windows muss electron.exe MIT dem App-Ordner starten
 function loginItem() {
   return app.isPackaged ? {} : { path: process.execPath, args: [__dirname] };
@@ -325,6 +410,17 @@ function createTray() {
         click: (item) => {
           borderOn = item.checked;
           updateOverlayVisibility();
+        },
+      },
+      {
+        label: wakeAvailable() ? 'Weckwort "nieeeki"' : "Weckwort (Modell fehlt)",
+        type: "checkbox",
+        enabled: wakeAvailable(),
+        checked: wakeAvailable() && wakeEnabled(),
+        click: (item) => {
+          writeConfig({ weckwort: item.checked });
+          if (item.checked) startWake();
+          else stopWake();
         },
       },
       {
@@ -409,6 +505,7 @@ app.whenReady().then(async () => {
   createMainWindow();
   createOverlays();
   watchFullscreen();
+  startWake();
   screen.on("display-added", createOverlays);
   screen.on("display-removed", createOverlays);
   screen.on("display-metrics-changed", createOverlays);
@@ -417,6 +514,7 @@ app.whenReady().then(async () => {
 app.on("before-quit", () => {
   quitting = true;
   fullscreenWatcher?.kill();
+  stopWake();
   stopServices();
 });
 

@@ -16,6 +16,10 @@ declare global {
       levels: (sample: LevelSample) => void;
       /** Lichtrahmen im Schleier: wo nieeeki gerade handelt (Bildschirmpixel vom Host) */
       highlight?: (h: { rahmen?: number[]; punkt?: number[]; ok: boolean }) => void;
+      /** Weckwort-Treffer vom lokalen Lauscher; gibt eine Abmelde-Funktion zurueck */
+      onWake?: (callback: (hit: { score: number }) => void) => () => void;
+      /** Laeuft ein Gespraech? Dann pausiert der Lauscher und gibt das Mikrofon frei. */
+      conversation?: (active: boolean) => void;
     };
   }
 }
@@ -66,6 +70,8 @@ export type LevelHistory = { samples: LevelSample[]; seq: number };
 
 const VOICE_CORE_URL = process.env.NEXT_PUBLIC_VOICE_CORE_URL ?? "http://localhost:7860";
 const HISTORY = 240; // ~12 s bei 20 Hz
+// Per Weckwort begonnene Gespraeche enden nach so langer Stille von selbst; dann lauscht der PC wieder.
+const WAKE_IDLE_MS = 45_000;
 
 export function useNieeeki() {
   const clientRef = useRef<PipecatClient | null>(null);
@@ -91,8 +97,14 @@ export function useNieeeki() {
   const softStop = useRef<SoftStop>({ armedAt: null, fading: false });
   const restoreVolume = () => restoreAudio(audioRef.current, softStop.current);
 
+  // Weckwort-Gespraech: seit wann ruhig, und ob gerade etwas laeuft, das nicht abbrechen darf
+  const wakeSession = useRef(false);
+  const lastChange = useRef(0);
+  const busy = useRef(false);
+
   const setPresence = useCallback((p: Presence) => {
     presenceRef.current = p;
+    lastChange.current = performance.now();
     setPresenceState(p);
   }, []);
 
@@ -125,8 +137,9 @@ export function useNieeeki() {
     return () => clearInterval(id);
   }, []);
 
-  const connect = useCallback(async () => {
+  const start = useCallback(async (anlass: "klick" | "weckwort") => {
     setError(null);
+    wakeSession.current = anlass === "weckwort";
     setPresence("connecting");
     const client = new PipecatClient({
       transport: new SmallWebRTCTransport(),
@@ -241,7 +254,8 @@ export function useNieeeki() {
       await client.startBotAndConnect({
         endpoint: `${VOICE_CORE_URL}/start`,
         headers: new Headers(token ? { Authorization: `Bearer ${token}` } : {}),
-        requestData: {}, // gueltiges JSON statt leerem Body (sonst ERROR im Voice-Core-Log)
+        // Immer gueltiges JSON (leerer Body gab einen ERROR im Log); per Weckwort begruesst sie nur kurz
+        requestData: anlass === "weckwort" ? { anlass } : {},
       });
     } catch (e) {
       setPresence("offline");
@@ -253,6 +267,8 @@ export function useNieeeki() {
     }
   }, [setPresence]);
 
+  const connect = useCallback(() => start("klick"), [start]);
+
   const disconnect = useCallback(async () => {
     await clientRef.current?.disconnect();
     clientRef.current = null;
@@ -263,6 +279,28 @@ export function useNieeeki() {
     setScreenTrack(null);
     setPresence("offline");
   }, [setPresence]);
+
+  // Desktop-App: "nieeeki" gesagt -> Gespraech starten (nur wenn keins laeuft)
+  useEffect(() => {
+    return window.nieeekiDesktop?.onWake?.(() => {
+      if (presenceRef.current === "offline") void start("weckwort");
+    });
+  }, [start]);
+
+  // Waehrend eines Gespraechs pausiert der Weckwort-Lauscher (das Mikrofon gehoert dem Gespraech)
+  useEffect(() => {
+    window.nieeekiDesktop?.conversation?.(presence !== "offline");
+  }, [presence]);
+
+  // Weckwort-Gespraech nach WAKE_IDLE_MS Stille beenden, aber nie mitten in einer Aktion, bei offener
+  // Freigabe, laufendem Entwicklungsauftrag oder Live-Bild
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!wakeSession.current || busy.current || presenceRef.current !== "idle") return;
+      if (performance.now() - lastChange.current > WAKE_IDLE_MS) void disconnect();
+    }, 1000);
+    return () => clearInterval(id);
+  }, [disconnect]);
 
   // Bildschirm-Stream an/aus; den Zustand bestaetigt der Voice-Core per Nachricht "bildschirm".
   const toggleScreen = useCallback(() => {
@@ -290,6 +328,13 @@ export function useNieeeki() {
   }, []);
 
   const acting = activities.some((a) => a.status === "laeuft");
+  const devRunning = canvasItems.some((it) => it.kind === "dokument" && it.laeuft === true);
+  const hasApprovals = approvals.length > 0;
+
+  useEffect(() => {
+    busy.current = acting || devRunning || hasApprovals || screenOn;
+    lastChange.current = performance.now(); // Stille zaehlt erst ab hier
+  }, [acting, devRunning, hasApprovals, screenOn]);
 
   return {
     presence,

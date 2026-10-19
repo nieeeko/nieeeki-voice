@@ -360,8 +360,9 @@ class DevAgent:
             lines += ["", "## Ergebnis", job.result]
         if job.pending:
             lines += ["", "## Wartet auf deine Freigabe", *[f"- {p['grund']}" for p in job.pending.values()]]
+        # laeuft: die Oberflaeche legt ein Weckwort-Gespraech dann nicht wegen Stille auf
         item = {"id": f"dev-{job.id}", "kind": "dokument", "title": f"Entwicklung: {job.projekt.name}",
-                "text": "\n".join(lines)}
+                "text": "\n".join(lines), "laeuft": job.status == "laeuft"}
         await self._task.queue_frames([RTVIServerMessageFrame(data={"type": "canvas", "item": item})])
 
     async def _announce(self, job: Job) -> None:
