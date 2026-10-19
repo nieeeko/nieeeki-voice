@@ -258,8 +258,8 @@ export function useNieeeki() {
   }, [screenOn]);
 
   // Tippen im Live-Bild (0..1 relativ zum Bild) = Klick am Laptop; der Host prueft das Ziel.
-  const clickScreen = useCallback((x: number, y: number) => {
-    clientRef.current?.sendClientMessage("bildschirm_klick", { x, y });
+  const clickScreen = useCallback((x: number, y: number, taste: "links" | "rechts" = "links") => {
+    clientRef.current?.sendClientMessage("bildschirm_klick", { x, y, taste });
   }, []);
   const scrollScreen = useCallback((x: number, y: number, richtung: "hoch" | "runter", schritte: number) => {
     clientRef.current?.sendClientMessage("bildschirm_scrollen", { x, y, richtung, schritte });

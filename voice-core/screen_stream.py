@@ -219,14 +219,16 @@ class ScreenStreamer(FrameProcessor):
         }))
         return result
 
-    async def click(self, fx: object, fy: object, pc_client) -> dict:
-        """Tippen im Live-Bild = Linksklick am Laptop."""
+    async def click(self, fx: object, fy: object, pc_client, taste: object = "links") -> dict:
+        """Tippen im Live-Bild = Linksklick, langes Druecken = Rechtsklick am Laptop."""
         if self._too_soon("klick"):
             return {"status": "ignored"}
         point = self._point(fx, fy)
         if point is None:
             return await self._remote("fernklick", pc_client, None, {}, "Stelle liegt nicht auf dem Bildschirm")
-        return await self._remote("fernklick", pc_client, "maus_klicken", {"x": point[0], "y": point[1]})
+        button = "rechts" if taste == "rechts" else "links"
+        return await self._remote("fernklick", pc_client, "maus_klicken",
+                                  {"x": point[0], "y": point[1], "taste": button})
 
     async def scroll(self, fx: object, fy: object, richtung: object, schritte: object, pc_client) -> dict:
         """Wischen im Live-Bild = Scrollen an dieser Stelle."""

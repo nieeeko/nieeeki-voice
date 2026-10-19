@@ -376,6 +376,10 @@ body {
   animation: tap 0.6s ease-out forwards;
 }
 @keyframes tap { from { transform: scale(0.3); opacity: 1; } to { transform: scale(1.4); opacity: 0; } }
+.screen-ripple[data-rechts="true"] { border-color: var(--voice-bot); border-width: 3px; }
+.screen-video { transition: transform 0.25s ease, transform-origin 0.25s ease; }
+.screen-stage[data-control="true"] .screen-video { -webkit-touch-callout: none; user-select: none; }
+.screen-bar { flex-wrap: wrap; }
 .screen-actions { display: inline-flex; align-items: center; gap: 10px; }
 .screen-control {
   appearance: none; border-radius: 999px; padding: 4px 12px; cursor: pointer;

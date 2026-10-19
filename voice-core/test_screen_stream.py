@@ -97,13 +97,21 @@ class FernklickTests(unittest.IsolatedAsyncioTestCase):
     async def test_tippen_klickt_ueber_den_host(self):
         streamer, host = _laufender_streamer()
         result = await streamer.click(0.25, 0.5, host)
-        host._call_tool_text.assert_awaited_once_with("maus_klicken", {"x": -1920, "y": 720})
+        host._call_tool_text.assert_awaited_once_with("maus_klicken", {"x": -1920, "y": 720, "taste": "links"})
         self.assertEqual(result["status"], "success")
         meldung = streamer.push_frame.await_args.args[0].data
         self.assertEqual((meldung["type"], meldung["name"], meldung["status"]), ("aktivitaet", "fernklick", "fertig"))
         # Doppeltippen direkt danach wird kein zweiter Klick
         self.assertEqual((await streamer.click(0.25, 0.5, host))["status"], "ignored")
         host._call_tool_text.assert_awaited_once()
+
+    async def test_langes_druecken_ist_rechtsklick(self):
+        streamer, host = _laufender_streamer()
+        await streamer.click(0.5, 0.5, host, "rechts")
+        host._call_tool_text.assert_awaited_once_with("maus_klicken", {"x": -1280, "y": 720, "taste": "rechts"})
+        streamer, host = _laufender_streamer()
+        await streamer.click(0.5, 0.5, host, "mitte; rm -rf")  # alles andere bleibt ein Linksklick
+        self.assertEqual(host._call_tool_text.await_args.args[1]["taste"], "links")
 
     async def test_host_lehnt_ab(self):
         streamer, host = _laufender_streamer('{"status": "locked", "summary": "Der Laptop ist gesperrt."}')

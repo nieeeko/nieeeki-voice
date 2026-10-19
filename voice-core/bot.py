@@ -339,7 +339,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         # Fernsteuerung aus dem Live-Bild am Handy (screen_stream.py, ausgefuehrt vom Host)
         data = msg.data or {}
         if msg.type == "bildschirm_klick":
-            await streamer.click(data.get("x"), data.get("y"), pc_client)
+            await streamer.click(data.get("x"), data.get("y"), pc_client, data.get("taste"))
             return
         if msg.type == "bildschirm_scrollen":
             await streamer.scroll(data.get("x"), data.get("y"), data.get("richtung"), data.get("schritte"), pc_client)
