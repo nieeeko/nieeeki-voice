@@ -1954,6 +1954,7 @@ dependencies = [
     { name = "httpx" },
     { name = "loguru" },
     { name = "pipecat-ai", extra = ["anthropic", "mcp", "runner", "webrtc"] },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "python-dotenv" },
     { name = "tzdata" },
 ]
@@ -1963,6 +1964,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "loguru", specifier = ">=0.7" },
     { name = "pipecat-ai", extras = ["anthropic", "mcp", "runner", "silero", "soniox", "webrtc"], specifier = ">=1.12,<2" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "tzdata", specifier = ">=2026.5" },
 ]

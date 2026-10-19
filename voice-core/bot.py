@@ -64,6 +64,7 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from memory import MemoryStore
 from persona import build_system_prompt
 from activity import ActivityReporter
+from auth_gate import install_owner_gate
 from audio_monitor import AudioInputMonitor, SpeakerTracker
 from learning import learn_from_session
 from dev_agent import DevAgent
@@ -180,8 +181,9 @@ transport_params = {
 
 
 async def run_bot(transport, runner_args: RunnerArguments) -> None:
-    user_id = (runner_args.body or {}).get("user_id") if runner_args.body else None
-    memory = MemoryStore.from_env(user_id=user_id)
+    # Immer Nikolajs Gedaechtnis: nur er kommt durch die Zugangskontrolle (auth_gate.py). Eine
+    # user_id aus dem Anfrage-Body wird bewusst ignoriert, die koennte jeder Client setzen.
+    memory = MemoryStore.from_env()
 
     stt = SonioxSTTService(
         api_key=os.environ["SONIOX_API_KEY"],
@@ -401,11 +403,15 @@ async def bot(runner_args: RunnerArguments):
 
 
 if __name__ == "__main__":
-    from pipecat.runner.run import main
+    from pipecat.runner.run import app, main
 
     # Nur die eigene Oberflaeche darf Sitzungen starten. Ohne Liste erlaubt der Runner jede
     # Herkunft (CORS *): eine fremde Webseite im Browser koennte ueber localhost:7860 eine
     # Sitzung aufbauen und so die PC-Werkzeuge ausloesen. Ein leerer Wert oeffnet das nicht.
     if not os.getenv("PIPECAT_ALLOWED_ORIGINS", "").strip():
-        os.environ["PIPECAT_ALLOWED_ORIGINS"] = "http://localhost:3000,http://127.0.0.1:3000"
+        os.environ["PIPECAT_ALLOWED_ORIGINS"] = (
+            "http://localhost:3000,http://127.0.0.1:3000,https://nieeeki.nieeeko.com"
+        )
+    # Und auch von dort nur Nikolaj: Supabase-Login mit zweitem Faktor (auth_gate.py).
+    install_owner_gate(app)
     main()
