@@ -16,6 +16,7 @@ Jeder Aufruf landet im Audit-Log (JSONL).
 
 from __future__ import annotations
 
+import hmac
 import ipaddress
 import json
 import os
@@ -80,6 +81,8 @@ BLOCKED_PATTERNS = [
 ]
 
 PENDING: dict[str, dict] = {}
+# Vom Voice-Core je Host-Start erzeugt (pc_host.py); ohne ihn fuehrt freigabe_entscheiden nichts aus.
+APPROVAL_KEY = os.getenv("NIEEEKI_APPROVAL_KEY", "")
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
@@ -476,9 +479,26 @@ def maus_scrollen(richtung: str = "runter", schritte: int = 5, x: int | None = N
     return {"status": "success", "summary": f"{steps} Schritte {richtung} in {target['titel'][:60]}"}
 
 
+@mcp.tool()
+def freigabe_entscheiden(approval_id: str, ja: bool, schluessel: str = "") -> dict:
+    """Nur fuer den Voice-Core, nach Nikolajs Klick auf eine Freigabe-Karte in der Oberflaeche.
+    Doppelt gesichert: steht nicht in pc_host.LLM_TOOLS (das Gespraechsmodell sieht es nicht) und
+    braucht den Schluessel, den der Voice-Core beim Start des Hosts erzeugt (NIEEEKI_APPROVAL_KEY)."""
+    approval_id = str(approval_id)
+    if not APPROVAL_KEY or not hmac.compare_digest(str(schluessel), APPROVAL_KEY):
+        _audit({"tool": "freigabe_entscheiden", "approval_id": approval_id, "risk": "blocked",
+                "error": "ohne gueltigen Schluessel"})
+        return {"status": "blocked", "summary": "Freigaben kommen nur aus der Oberflaeche."}
+    if not bool(ja):
+        action = PENDING.pop(approval_id, None)
+        _audit({"tool": "freigabe_entscheiden", "approval_id": approval_id, "risk": "rejected", **(action or {})})
+        return {"status": "rejected", "summary": "Abgelehnt, es wurde nichts ausgefuehrt."}
+    return execute_approved(approval_id)
+
+
 def execute_approved(approval_id: str) -> dict:
-    """Fuehrt eine freigegebene Aktion aus. Bewusst KEIN MCP-Werkzeug: Freigaben kommen spaeter
-    aus der UI (Tabelle actions, Klick durch Nikolaj), nie vom Modell."""
+    """Fuehrt eine freigegebene Aktion aus. Erreichbar nur ueber freigabe_entscheiden, also nach
+    Nikolajs Klick in der UI, nie vom Modell."""
     action = PENDING.pop(approval_id, None)
     if not action:
         return {"status": "error", "summary": "Unbekannte oder abgelaufene Freigabe."}

@@ -56,11 +56,13 @@ Entwicklungsaufträge mit Art planen/umsetzen/reviewen und passenden ECC-Werkzeu
 2. **Weckwort „nieeeki“** (openWakeWord mit eigenem Modell), damit kein Klick mehr nötig ist.
 3. **Eigene Stimme:** Aufnahme mit dem Vorlesetext → Soniox-Voice-Cloning, A/B-Test gegen Nina.
 4. **Sprach-Feinschliff, je eine Änderung pro Test:** Sprechtempo 1,1; „Ja“ während ihrer Frage.
-5. **Fernsteuerung verfeinern:** Rechtsklick (langes Drücken), Zoom ins Live-Bild für kleine Schrift.
-6. **Schleier 2.0:** bei Vollbild-Spielen und -Videos ausblenden, Lichtrahmen ums Zielfenster.
-7. **Freigaben auch für PC-Aktionen** (`powershell_lesen` → needs_approval) in den Freigabe-Karten.
-8. **Online ohne Tailscale-App** (Daily-Transport, Phase 2) und Voice-Core in der Cloud (Phase 3).
-9. **Kalender und Mail** (zurückgestellt), **Desktop-App packen** (Installer, Startmenü).
+5. **Lichtrahmen ums Zielfenster** im Schleier, wenn nieeeki am PC handelt, plus Welle am Klickpunkt.
+6. **Online ohne Tailscale-App** (Daily-Transport, Phase 2) und Voice-Core in der Cloud (Phase 3).
+7. **Kalender und Mail** (zurückgestellt), **Desktop-App packen** (Installer, Startmenü).
+
+Seit dem 19.10. zusätzlich erledigt: Freigabe-Karten für PC-Aktionen (Klick führt aus, doppelt
+gesichert), Rechtsklick per langem Drücken und Lupe im Live-Bild, Schleier blendet sich bei
+Vollbild-Spielen, -Videos und Präsentationen aus.
 
 Start: `scripts\nieeeki-desktop.cmd` (startet Voice-Core und Oberfläche selbst).
 

@@ -81,6 +81,57 @@ class PowershellTests(unittest.TestCase):
         self.assertNotIn("approve", names)
         self.assertNotIn("execute_approved", names)
         self.assertNotIn("run_powershell", names)
+        # freigabe_entscheiden gibt es, aber nur mit Schluessel und nie in pc_host.LLM_TOOLS (Voice-Core-Test)
+        self.assertIn("freigabe_entscheiden", names)
+
+
+class ApprovalTests(unittest.TestCase):
+    def setUp(self):
+        host.PENDING.clear()
+        self.key = mock.patch.object(host, "APPROVAL_KEY", "geheimer-test-schluessel")
+        self.key.start()
+
+    def tearDown(self):
+        self.key.stop()
+        host.PENDING.clear()
+
+    def _anfrage(self):
+        with mock.patch.object(host, "_powershell") as run:
+            result = host.powershell_lesen("Stop-Process -Name notepad", "Notepad schliessen")
+        run.assert_not_called()
+        self.assertEqual(result["status"], "needs_approval")
+        return result["approval_id"]
+
+    def test_ja_fuehrt_genau_einmal_aus(self):
+        aid = self._anfrage()
+        with mock.patch.object(host, "_powershell", return_value={"status": "success", "summary": "ok"}) as run:
+            first = host.freigabe_entscheiden(aid, True, "geheimer-test-schluessel")
+            second = host.freigabe_entscheiden(aid, True, "geheimer-test-schluessel")
+        run.assert_called_once_with("Stop-Process -Name notepad", timeout=600)
+        self.assertEqual(first["status"], "success")
+        self.assertEqual(second["status"], "error")
+
+    def test_nein_fuehrt_nichts_aus(self):
+        aid = self._anfrage()
+        with mock.patch.object(host, "_powershell") as run:
+            result = host.freigabe_entscheiden(aid, False, "geheimer-test-schluessel")
+            again = host.freigabe_entscheiden(aid, True, "geheimer-test-schluessel")
+        run.assert_not_called()
+        self.assertEqual(result["status"], "rejected")
+        self.assertEqual(again["status"], "error")
+
+    def test_ohne_schluessel_nichts(self):
+        aid = self._anfrage()
+        with mock.patch.object(host, "_powershell") as run:
+            for key in ["", "falsch", None]:
+                self.assertEqual(host.freigabe_entscheiden(aid, True, key)["status"], "blocked")
+        run.assert_not_called()
+        self.assertIn(aid, host.PENDING)  # die Anfrage bleibt offen
+
+    def test_unbekannte_freigabe(self):
+        with mock.patch.object(host, "_powershell") as run:
+            self.assertEqual(host.freigabe_entscheiden("deadbeef", True, "geheimer-test-schluessel")["status"], "error")
+        run.assert_not_called()
 
 
 class KeyboardAndWindowTests(unittest.TestCase):

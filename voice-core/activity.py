@@ -31,13 +31,38 @@ def _detail(name: str, args: dict) -> str:
     return ""
 
 
-def _status(result) -> str:
+def _parse(result) -> dict | None:
     try:
         data = json.loads(result) if isinstance(result, str) else result
     except (TypeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def approval_card(name: str, args: dict, result) -> dict | None:
+    """PC-Aktion, die Nikolaj freigeben muss (Host: status=needs_approval) -> Karte in der UI."""
+    data = _parse(result)
+    if not data or data.get("status") != "needs_approval" or not data.get("approval_id"):
+        return None
+    args = args if isinstance(args, dict) else {}
+    return {
+        "type": "freigaben", "job": "pc", "projekt": "Laptop",
+        "items": [{
+            "id": str(data["approval_id"]),
+            "grund": str(args.get("reason") or name)[:120],
+            "detail": str(args.get("command") or data.get("summary", ""))[:300],
+        }],
+    }
+
+
+def _status(result) -> str:
+    data = _parse(result)
+    if data is None:
         return "fertig"
     if isinstance(data, dict):
         status = str(data.get("status", "")).lower()
+        if status == "needs_approval":
+            return "wartet"
         if status in ("rejected", "blocked", "duplicate", "nicht_gefunden", "locked"):
             return "abgelehnt"
         if status == "error" or data.get("ok") is False:
@@ -60,4 +85,6 @@ class ActivityReporter(FrameProcessor):
                 "detail": _detail(frame.function_name, frame.arguments),
                 "status": "fehler" if frame.error else _status(frame.result),
             }))
+            if card := approval_card(frame.function_name, frame.arguments, frame.result):
+                await self.push_frame(RTVIServerMessageFrame(data=card))
         await self.push_frame(frame, direction)

@@ -37,6 +37,7 @@ const STATUS_TEXT: Record<Activity["status"], string> = {
   fertig: "erledigt",
   abgelehnt: "nicht ausgeführt",
   fehler: "Fehler",
+  wartet: "wartet auf Freigabe",
 };
 
 export function ActivityFeed({ items }: { items: Activity[] }) {
