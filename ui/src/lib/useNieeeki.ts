@@ -82,7 +82,6 @@ export function useNieeeki() {
 
   // Weicher Stopp bei Unterbrechungen (Server schickt "leiser_stopp")
   const softStop = useRef<SoftStop>({ armedAt: null, fading: false });
-  const fadeOut = () => fadeOutAudio(audioRef.current, softStop.current);
   const restoreVolume = () => restoreAudio(audioRef.current, softStop.current);
 
   const setPresence = useCallback((p: Presence) => {
@@ -101,6 +100,12 @@ export function useNieeeki() {
         for (const v of meter.buf) sum += v * v;
         // RMS ungefaehr auf die Skala des Mikrofonpegels bringen (Sprache ~0,1-0,3)
         levels.current.bot = Math.min(1, Math.sqrt(sum / meter.buf.length) * 2);
+      }
+      // Weicher Stopp: in der naechsten Wortpause (spaetestens nach 600 ms) ausblenden. Hing frueher
+      // an onRemoteAudioLevel, das bei SmallWebRTC nie feuert, und war deshalb nie aktiv.
+      const stop = softStop.current;
+      if (stop.armedAt && !stop.fading && (levels.current.bot < 0.015 || performance.now() - stop.armedAt > 600)) {
+        fadeOutAudio(audioRef.current, stop);
       }
       const s = { ...levels.current };
       levels.current.cut = false;
@@ -143,14 +148,6 @@ export function useNieeeki() {
         onBotTranscript: (d) => setBotLine((l) => (l ? `${l} ${d.text}` : d.text)),
         onLocalAudioLevel: (level) => {
           levels.current.user = level;
-        },
-        onRemoteAudioLevel: (level) => {
-          levels.current.bot = level;
-          // Weicher Stopp: in der naechsten Wortpause (oder spaetestens nach 600 ms) ausblenden
-          const armed = softStop.current.armedAt;
-          if (armed && !softStop.current.fading && (level < 0.015 || performance.now() - armed > 600)) {
-            fadeOut();
-          }
         },
         onTrackStarted: (track, participant) => {
           if (participant?.local) return;
