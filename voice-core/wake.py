@@ -37,7 +37,19 @@ MEL_WINDOW = 76  # Mel-Zeilen je Embedding
 N_EMBEDDINGS = 16  # Eingabelaenge des Klassifikators
 
 MODEL_PATH = Path(os.getenv("NIEEEKI_WAKE_MODEL") or Path(__file__).parent / "models" / "nieeeki.onnx")
-THRESHOLD = float(os.getenv("NIEEEKI_WAKE_THRESHOLD") or 0.5)
+
+
+def model_threshold(model_path: Path, default: float = 0.5) -> float:
+    """Schwelle aus der Begleitdatei des Modells (z. B. models/nieeeki.json), sonst default."""
+    try:
+        value = json.loads(model_path.with_suffix(".json").read_text(encoding="utf-8"))["schwelle"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return default
+    return float(value) if isinstance(value, (int, float)) and 0 < value < 1 else default
+
+
+# Umgebung (voice-core/.env) vor Begleitdatei vor 0,5
+THRESHOLD = float(os.getenv("NIEEEKI_WAKE_THRESHOLD") or model_threshold(MODEL_PATH))
 DEBOUNCE_SECS = 2.0
 NEAR_MISS = 0.3  # knappe Fehlschlaege ins Log (nur Zahlen), hilft beim Einstellen der Schwelle
 

@@ -97,7 +97,10 @@ Grenzen: iOS pausiert die App im Hintergrund; das Gespräch läuft nur, solange 
   etwa 3 % eines CPU-Kerns. Während eines Gesprächs pausiert er und gibt das Mikrofon frei.
 - Tray: Schalter „Weckwort "nieeeki"“. Schwelle in `voice-core/.env` (`NIEEEKI_WAKE_THRESHOLD`).
 - Das Modell `voice-core/models/nieeeki.onnx` ist selbst trainiert (synthetische Stimmen), siehe
-  [wakeword/README.md](wakeword/README.md).
+  [wakeword/README.md](wakeword/README.md). Schwelle 0,8 (`models/nieeeki.json`), gemessen gleitend wie im
+  Betrieb: 84,5 % erkannt, 2,2 % Fehlalarm bei ähnlichen Wörtern („sneaky“, „Nicky“, „Niko“), etwa ein
+  Fehlalarm in 11 Stunden Gerede. Knappe Fälle stehen mit Wert in `desktop\logs\wake.log`; danach die
+  Schwelle in `voice-core/.env` (`NIEEEKI_WAKE_THRESHOLD`, z. B. 0.7) nachstellen.
 
 ## Admin-Zugriff (mit Freigabe)
 

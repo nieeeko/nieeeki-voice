@@ -1,0 +1,11 @@
+{
+  "schwelle": 0.8,
+  "training": "livekit-wakeword 0.3.0, wakeword/nieeeki.yaml (Gegenbeispiele per augment_negatives.py am Fensterende, max_negative_weight 500), 19.10.2026",
+  "messung": {
+    "art": "gleitend wie wake.py (80-ms-Schritte, 2 s Sperre)",
+    "erkannt": {"0.5": 0.920, "0.7": 0.885, "0.8": 0.845, "0.9": 0.758},
+    "fehlalarm_aehnliche_woerter": {"0.5": 0.062, "0.7": 0.028, "0.8": 0.022, "0.9": 0.008},
+    "fehlalarme_pro_stunde_allgemein": {"0.5": 1.22, "0.7": 0.37, "0.8": 0.09, "0.9": 0.0},
+    "daten": "je 400 Testclips (synthetisch, 300 verhallt/verrauscht) und 10,7 h ACAV100M-Validierung"
+  }
+}
