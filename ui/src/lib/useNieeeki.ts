@@ -48,7 +48,7 @@ export type Activity = {
   id: string;
   name: string;
   detail: string;
-  status: "laeuft" | "fertig" | "abgelehnt" | "fehler";
+  status: "laeuft" | "fertig" | "abgelehnt" | "fehler" | "wartet";
 };
 
 /** Ein Abtastwert der Stimmlinie: oben Nikolaj, unten nieeeki. */

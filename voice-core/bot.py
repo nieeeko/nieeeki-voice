@@ -68,7 +68,7 @@ from auth_gate import install_owner_gate
 from audio_monitor import AudioInputMonitor, SpeakerTracker
 from learning import learn_from_session
 from dev_agent import DevAgent
-from pc_host import host_client, host_tools
+from pc_host import decide_pc_approval, host_client, host_tools, report_pc_approval
 from screen import register_screen_tools
 from screen_stream import ScreenStreamer, register_stream_tool, video_params
 from tools import register_tools
@@ -349,6 +349,12 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             return
         if msg.type == "bildschirm_taste":
             await streamer.press_key(data.get("taste"), pc_client)
+            return
+        # Freigabe-Karte fuer eine PC-Aktion (z. B. PowerShell); Entwicklungsauftraege gehen an dev
+        if msg.type == "freigabe" and data.get("job") == "pc":
+            ja = data.get("entscheidung") == "ja"
+            result = await decide_pc_approval(pc_client, data.get("id"), ja)
+            await report_pc_approval(task, ja, result)
             return
         await dev.on_client_message(msg.type, msg.data or {})
 

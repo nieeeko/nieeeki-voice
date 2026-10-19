@@ -280,6 +280,7 @@ body {
 .activity-item[data-status="fertig"] .activity-dot { background: var(--voice-bot); }
 .activity-item[data-status="abgelehnt"] .activity-dot,
 .activity-item[data-status="fehler"] .activity-dot { background: var(--cut); }
+.activity-item[data-status="wartet"] .activity-dot { background: var(--cut); animation: breathe 1.2s ease-in-out infinite; }
 .activity-what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .activity-detail { color: var(--ink-soft); }
 .activity-status { color: var(--ink-soft); font-size: 12px; }
