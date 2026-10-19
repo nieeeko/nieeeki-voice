@@ -1,5 +1,9 @@
 "use client";
 
+import { ActivityFeed } from "@/components/ActivityFeed";
+import { Canvas } from "@/components/Canvas";
+import { LoginGate } from "@/components/LoginGate";
+import { Orb } from "@/components/Orb";
 import { VoiceLine } from "@/components/VoiceLine";
 import { useNieeeki, type Presence } from "@/lib/useNieeeki";
 
@@ -15,38 +19,94 @@ const PRESENCE_TEXT: Record<Presence, string> = {
 const CANVAS_KINDS = [
   { name: "Tabellen", hint: "„Zeig mir die Projektliste als Tabelle“" },
   { name: "Dokumente", hint: "„Entwirf ein Angebot für …“" },
-  { name: "BPMN-Prozesse", hint: "„Modellier den Freigabeprozess“" },
-  { name: "Architektur", hint: "„Skizzier die Systemlandschaft von …“" },
-  { name: "Pipelines", hint: "„Wie läuft das Deployment gerade?“" },
-  { name: "Code", hint: "„Schreib das Migrationsskript“" },
+  { name: "Diagramme", hint: "„Skizzier die Systemlandschaft von …“" },
+  { name: "Code", hint: "„Zeig mir ein SQL-Statement mit JOIN“" },
+  { name: "Websuche", hint: "„Wie wird das Wetter morgen?“" },
+  { name: "Am PC", hint: "„Öffne WhatsApp“ · „Klick auf Senden“" },
 ];
 
 export default function Home() {
-  const { presence, history, userLine, botLine, error, connect, disconnect } = useNieeeki();
+  return <LoginGate>{(signOut) => <Nieeeki signOut={signOut} />}</LoginGate>;
+}
+
+function Nieeeki({ signOut }: { signOut: () => void }) {
+  const {
+    presence,
+    history,
+    levels,
+    userLine,
+    botLine,
+    error,
+    canvasItems,
+    approvals,
+    activities,
+    acting,
+    decide,
+    connect,
+    disconnect,
+  } = useNieeeki();
   const online = presence !== "offline" && presence !== "connecting";
+  const state = acting && online ? "handelt" : PRESENCE_TEXT[presence];
 
   return (
-    <div className="shell">
+    <div className="shell" data-presence={presence} data-acting={acting}>
+      <div className="aurora" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
+
       <section className="presence" data-presence={presence}>
         <header className="presence-head">
           <h1 className="wordmark">nieeeki</h1>
           <p className="state" aria-live="polite">
-            {PRESENCE_TEXT[presence]}
+            <span className="state-dot" aria-hidden="true" />
+            {state}
           </p>
         </header>
 
-        <VoiceLine history={history} presence={presence} />
-        <div className="legend">
-          <span className="legend-user">du</span>
-          <span className="legend-bot">nieeeki</span>
+        <div className="orb-wrap">
+          <Orb presence={presence} levels={levels} acting={acting} />
         </div>
+
+        <VoiceLine history={history} presence={presence} />
 
         <div className="lines" aria-live="polite">
-          <p className="line-user">{userLine || (online ? "Sag einfach, was du brauchst." : "")}</p>
-          <p className="line-bot">{botLine}</p>
+          <p className="line-user" key={`u-${userLine}`}>
+            {userLine || (online ? "Sag einfach, was du brauchst." : "Tippe auf „Gespräch starten“.")}
+          </p>
+          {botLine && (
+            <p className="line-bot" key={`b-${botLine.slice(0, 24)}`}>
+              {botLine}
+            </p>
+          )}
         </div>
 
+        <ActivityFeed items={activities} />
+
         {error && <p className="error">{error}</p>}
+
+        {approvals.length > 0 && (
+          <section className="approvals" aria-label="Freigaben">
+            <h2>Wartet auf deine Freigabe</h2>
+            {approvals.map((a) => (
+              <article key={`${a.job}-${a.id}`} className="approval">
+                <p className="approval-what">
+                  <strong>{a.grund}</strong> <span>· {a.projekt}</span>
+                </p>
+                <code className="approval-detail">{a.detail}</code>
+                <div className="approval-actions">
+                  <button className="approve" onClick={() => decide(a, true)}>
+                    Freigeben
+                  </button>
+                  <button className="reject" onClick={() => decide(a, false)}>
+                    Ablehnen
+                  </button>
+                </div>
+              </article>
+            ))}
+          </section>
+        )}
 
         <button
           className="wake"
@@ -55,22 +115,35 @@ export default function Home() {
         >
           {online ? "Gespräch beenden" : presence === "connecting" ? "Verbinde …" : "Gespräch starten"}
         </button>
-        <p className="fine">Später reicht „nieeeki“ als Weckwort.</p>
+        <button
+          type="button"
+          className="gate-link"
+          onClick={() => {
+            void disconnect();
+            signOut();
+          }}
+        >
+          Abmelden
+        </button>
       </section>
 
       <section className="canvas" aria-label="Canvas">
-        <div className="canvas-empty">
-          <h2>Was nieeeki dir hier zeigt</h2>
-          <p>Ergebnisse, die man sehen muss, landen auf dieser Fläche statt in der Sprache.</p>
-          <ul className="kinds">
-            {CANVAS_KINDS.map((k) => (
-              <li key={k.name}>
-                <strong>{k.name}</strong>
-                <span>{k.hint}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        {canvasItems.length > 0 ? (
+          <Canvas items={canvasItems} />
+        ) : (
+          <div className="canvas-empty">
+            <h2>Was nieeeki dir hier zeigt</h2>
+            <p>Ergebnisse, die man sehen muss, landen auf dieser Fläche statt in der Sprache.</p>
+            <ul className="kinds">
+              {CANVAS_KINDS.map((k, i) => (
+                <li key={k.name} style={{ animationDelay: `${i * 0.9}s` }}>
+                  <strong>{k.name}</strong>
+                  <span>{k.hint}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </section>
     </div>
   );

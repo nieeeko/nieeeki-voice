@@ -3,4 +3,8 @@ name = "nieeeki-host"
 version = "0.1.0"
 description = "nieeeki-Host: Windows-Werkzeugserver (MCP) mit Freigabe-Klassen"
 requires-python = ">=3.11"
-dependencies = ["mcp>=1.10,<2"]
+dependencies = [
+    "mcp>=1.10,<2",
+    "mss>=10.2.0",
+    "pillow>=13.0.0",
+]

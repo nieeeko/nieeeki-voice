@@ -8,3 +8,10 @@ node_modules/
 .next/
 nieeeki_audit.jsonl
 .DS_Store
+voice-samples/
+*.stackdump
+webrtc_internals_dump*.txt
+voice-core/.jobs/
+desktop/node_modules/
+desktop/logs/
+.vscode

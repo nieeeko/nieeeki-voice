@@ -26,25 +26,49 @@ eine Oberfläche mit Stimmlinie und Canvas sowie Werkzeuge für den Windows-PC.
 - [x] Gesprächsmodell auf Haiku 5.5 umgestellt (≈ 1/20 der Kosten von Sonnet 5.5).
 - [x] Voice-Core und Host offline getestet (Imports, Pipeline-Aufbau, Risikoklassen); UI-Build und Lint grün.
 
-**Noch nicht getestet**
-- [ ] Erstes echtes Gespräch (Mikrofon → nieeeki → Lautsprecher) mit echten Schlüsseln.
+- [x] Erste echte Gespräche (17.10.2026): Latenz ≈ 1–1,5 s bis zum ersten Ton.
+- [x] Weiche Unterbrechung: Rückmeldelaute („mhm“, „ja genau“) ignorieren, sonst Satz bzw. max. 3 Wörter
+      zu Ende sprechen, nie mitten im Wort (`voice-core/soft_interrupt.py`).
+- [x] Satzende per Smart-Turn + Claude (wartet bei Bruchstücken); STT strikt Deutsch; Begrüßung wärmt TTS auf.
+- [x] Gedächtnis in DEV aktiv (`NIEEEKI_OWNER_ID`), Werkzeuge `aktuelle_zeit` und `merken`,
+      Lernen nach jedem Gespräch: Fakten, Vorlieben und Nikolajs Sprechweise (`voice-core/learning.py`).
+
+**Bekannt / offen**
+- Soniox-Spracherkennung läuft in der **US-Region** (Schlüssel gehört zu einem US-Projekt). Für EU-Datenhaltung
+  EU-Schlüssel anlegen und `SONIOX_STT_URL`/`SONIOX_TTS_URL` auf `*.eu.soniox.com` stellen.
+- Was Nikolaj sagt, während nieeeki spricht, wird schlechter erkannt (Echo). Kopfhörer bzw. Headset hilft.
+- `ui/package.json`: `eslint-config-next` wurde durch `npm audit fix --force` auf 14.x herabgestuft → Lint kaputt.
 
 ## Hier weitermachen
 
-1. **Erster Gesprächstest lokal** (siehe unten „Lokal starten“). Prüfen:
-   - Zeit vom Ende deines Satzes bis zur Antwort
-   - „warte mal, eigentlich …“ mitten in ihrer Antwort → stoppt sie sofort und knüpft an?
-   - kurzes „mhm“ → darf sie *nicht* stoppen
-2. **Gedächtnis einschalten:** nieeeki-Profil für Nikolajs Auth-User in `nieeeki_voice_dev` anlegen
-   (nur per service_role möglich), dann `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
-   `NIEEEKI_OWNER_ID` in `.env` setzen.
-3. **Verlauf zusammenfassen**, damit Haiku unter 100.000 Tokens pro Prompt bleibt (darüber 5× teurer).
-4. **Canvas-Tool** `canvas_show(type, title, data)` mit Renderern: Tabelle, Dokument, BPMN (bpmn-js), Mermaid/React Flow, Code.
-5. **PC-Host anbinden:** Voice-Core ruft Host-Tools per MCP auf; kritische Aktionen über Tabelle `actions` freigeben.
-6. **Weckwort „nieeeki“** (Porcupine oder openWakeWord), danach Desktop-App mit Tauri.
-7. **Runpod-Deployment:** WebRTC braucht UDP, Runpod leitet nur HTTP/TCP weiter → TURN-Server oder Daily-Transport nötig.
-8. **Eigene Stimme:** Soniox-Voice-Cloning (≤ 2 Min sauberer Aufnahme), A/B-Test gegen Bibliotheksstimme.
-9. **Sprechererkennung:** Stimmabdruck (ECAPA) in `speakers`, nur Nikolaj darf kritische Aktionen freigeben.
+**Erledigt seit dem ersten Test:** Websuche, Canvas (Tabelle, Code, Dokument, Mermaid), Gedächtnis mit
+Lernen während des Gesprächs, PC-Host (Programme, Fenster, Tastatur, Bildschirm ansehen, Klicken),
+Entwicklungsaufträge an Claude Code mit Freigabe-Karten, Desktop-App mit Stimmen-Rand und Autostart,
+Zusammenfassung langer Gespräche, Sprecherfarben im Rand (erster Sprecher = Nikolaj).
+
+1. **Stimmabdruck** (ECAPA) in `speakers`: Nikolaj sicher erkennen statt „wer zuerst spricht“;
+   nur seine Stimme darf Aufträge und PC-Aktionen auslösen.
+2. **Weckwort „nieeeki“** (openWakeWord mit eigenem Modell), damit kein Klick mehr nötig ist.
+3. **Eigene Stimme:** Aufnahme mit dem Vorlesetext → Soniox-Voice-Cloning, A/B-Test gegen Nina.
+4. **Freigaben auch für PC-Aktionen** (`powershell_lesen` → needs_approval) in den Freigabe-Karten.
+5. **Kalender und Mail** (zurückgestellt).
+6. **Runpod-Deployment:** WebRTC braucht UDP → TURN-Server oder Daily-Transport.
+7. **Desktop-App packen** (Installer, Startmenü-Eintrag) statt Start aus dem Repo.
+
+Start: `scripts\nieeeki-desktop.cmd` (startet Voice-Core und Oberfläche selbst).
+
+## Anmeldung und Online-Zugang
+
+- Die Oberfläche (lokal, Desktop-App und `https://nieeeki.nieeeko.com`) beginnt mit einer Anmeldung:
+  E-Mail und Passwort, danach der Code aus der Authenticator-App. Beim ersten Mal QR-Code scannen.
+- Der Voice-Core prüft jedes Token selbst (`voice-core/auth_gate.py`): nur `NIEEEKI_OWNER_ID` mit
+  zweitem Faktor (aal2), sonst 401. WebSockets sind gesperrt, erlaubte Herkünfte siehe `.env.example`.
+- Online über Tailscale (Phase 1, kostenlos für private Nutzung, keine offenen Ports am Router):
+  1. Tailscale auf Laptop und Handy, beide mit demselben Konto anmelden.
+  2. Auf dem Laptop: `tailscale serve --bg 7860` (Funnel bleibt aus: nur im eigenen Tailnet erreichbar).
+  3. In Vercel `NEXT_PUBLIC_VOICE_CORE_URL=https://<laptop>.<tailnet>.ts.net` setzen und neu deployen.
+  4. Auf dem Handy (Tailscale an) `https://nieeeki.nieeeko.com` öffnen und anmelden.
+- Domain: CNAME `nieeeki` bei Hostinger auf Vercel (seit 19.10.2026). Produktion kommt von `main`.
 
 Ausführlicher Bauplan: Doc „nieeeki – Bauplan für den eigenen Jarvis“ (Architektur, 10-Schritte-Plan, Entscheidungen).
 
@@ -88,7 +112,7 @@ Dann `http://localhost:3000` öffnen → „Gespräch starten“ → Mikrofon er
 
 | Datei | Gelesen von | Inhalt |
 | --- | --- | --- |
-| `.env` (Hauptordner oder `voice-core/`) | Voice-Core (Python) | `SONIOX_API_KEY`, `ANTHROPIC_API_KEY`, später `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NIEEEKI_OWNER_ID`, `VOYAGE_API_KEY` |
+| `.env` (Hauptordner oder `voice-core/`) | Voice-Core (Python) | `SONIOX_API_KEY`, `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `NIEEEKI_OWNER_ID`, `VOYAGE_API_KEY`; optional `SONIOX_TERMS`, `PIPECAT_ALLOWED_ORIGINS` |
 | `ui/.env.local` | Next.js | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_NIEEEKI_DB_SCHEMA`, `NEXT_PUBLIC_VOICE_CORE_URL` |
 
 - Python liest nur eine Datei namens **`.env`**, keine `.env.local`.
