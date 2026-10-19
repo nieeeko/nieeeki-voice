@@ -67,6 +67,15 @@ class McpTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(d(f"mcp__claude_ai_Vercel__{name}", {}, PROJECT)[0], "block")
 
+    def test_rea_nur_web_oberflaeche_ansehen(self):
+        d = g.decide
+        for name in sorted(g.REA_ALLOWED):
+            with self.subTest(name=name):
+                self.assertEqual(d(f"mcp__rea__{name}", {}, PROJECT)[0], "allow")
+        for name in ["open_binary", "export_web_scripts", "pull_adb_file"]:
+            with self.subTest(name=name):
+                self.assertEqual(d(f"mcp__rea__{name}", {}, PROJECT)[0], "block")
+
 
 class FileTests(unittest.TestCase):
     def test_write_only_in_project(self):
