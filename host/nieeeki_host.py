@@ -288,10 +288,22 @@ def fenster_auflisten() -> dict:
     return {"status": "success", "fenster": windows[:40], "vorne": wc.foreground()["titel"]}
 
 
+def _locked(tool: str) -> dict | None:
+    """Ist der Laptop gesperrt, laeuft jede Eingabe ins Leere: klar melden statt so zu tun als ob.
+    Wichtig beim Fernzugriff vom Handy, wo Nikolaj den Bildschirm nicht sieht."""
+    if not wc.is_locked():
+        return None
+    _audit({"tool": tool, "risk": "rejected", "error": "bildschirm gesperrt"})
+    return {"status": "locked", "summary": "Der Laptop ist gesperrt. Tippen, Klicken und Ansehen gehen "
+            "erst wieder, wenn Nikolaj ihn entsperrt."}
+
+
 @mcp.tool()
 def fenster_fokussieren(fenster: str) -> dict:
     """Holt ein offenes Fenster nach vorne (change). `fenster` = Teil des Titels oder Programmname,
     z. B. 'WhatsApp', 'Code', 'Chrome'."""
+    if locked := _locked("fenster_fokussieren"):
+        return locked
     try:
         w = wc.find_window(str(fenster))
     except ValueError as e:
@@ -317,6 +329,8 @@ def tastatur_tippen(text: str, fenster: str = "") -> dict:
     Nikolaj so gewollt hat. In Konsolen, Admin- und Passwortfenster tippt nieeeki nie."""
     if not isinstance(text, str) or not text or len(text) > wc.MAX_TYPE_CHARS:
         return {"status": "rejected", "summary": f"Text fehlt oder ist laenger als {wc.MAX_TYPE_CHARS} Zeichen"}
+    if locked := _locked("tastatur_tippen"):
+        return locked
     try:
         target = _prepare_input(fenster or None)
     except ValueError as e:
@@ -334,6 +348,8 @@ def tastatur_tippen(text: str, fenster: str = "") -> dict:
 def tasten_druecken(kombination: str, fenster: str = "") -> dict:
     """Drueckt eine Taste oder Tastenkombination (change), z. B. 'enter', 'ctrl+t', 'ctrl+l', 'esc',
     'alt+tab'. Windows-Taste ist gesperrt; in Konsolen, Admin- und Passwortfenstern nie."""
+    if locked := _locked("tasten_druecken"):
+        return locked
     try:
         codes = wc.parse_combo(kombination)
         target = _prepare_input(fenster or None)
@@ -398,6 +414,8 @@ def dark_mode(enabled: bool) -> dict:
 def bildschirmfoto(monitor: int = 0) -> dict:
     """Bildschirmfoto als JPEG (read). Nur fuer den Voice-Core, der es an ein Bildmodell gibt;
     wird dem Gespraechsmodell nicht angeboten. monitor 0 = der mit dem Fenster vorne."""
+    if locked := _locked("bildschirmfoto"):
+        return locked
     try:
         shot = wc.screenshot(int(monitor))
     except ValueError as e:
@@ -421,6 +439,8 @@ def maus_klicken(x: int, y: int, taste: str = "links", doppelt: bool = False) ->
     dem Bildmodell). Nie auf Konsolen, Admin-, Anmelde- oder Passwortfenster."""
     if taste not in ("links", "rechts"):
         return {"status": "rejected", "summary": "taste: links oder rechts"}
+    if locked := _locked("maus_klicken"):
+        return locked
     try:
         x, y = int(x), int(y)
         target = _check_point(x, y)
@@ -438,6 +458,8 @@ def maus_scrollen(richtung: str = "runter", schritte: int = 5) -> dict:
     """Scrollt im Fenster vorne (change). richtung: hoch oder runter, schritte 1-20."""
     if richtung not in ("hoch", "runter"):
         return {"status": "rejected", "summary": "richtung: hoch oder runter"}
+    if locked := _locked("maus_scrollen"):
+        return locked
     steps = max(1, min(20, int(schritte)))
     win32gui = wc._win32()[0]
     left, top, right, bottom = win32gui.GetWindowRect(win32gui.GetForegroundWindow())
