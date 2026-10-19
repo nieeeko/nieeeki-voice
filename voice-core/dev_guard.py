@@ -71,6 +71,9 @@ SUPABASE_WRITE = {
 
 FILE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 
+# REA in autonomen Auftraegen: nur die eigene Web-Oberflaeche ansehen, alles andere gesperrt.
+REA_ALLOWED = {"capture_web_screenshot", "inspect_web_page", "list_browser_targets"}
+
 
 def fingerprint(tool_name: str, tool_input: dict) -> str:
     raw = tool_name + "\n" + json.dumps(tool_input, sort_keys=True, ensure_ascii=False)
@@ -129,6 +132,11 @@ def decide(tool_name: str, tool_input: dict, project_dir: Path | None) -> tuple[
         if re.search(r"(merge|push)", name):
             return "approval", f"GitHub {name}"
         return "allow", ""
+
+    if tool_name.startswith("mcp__rea__"):
+        if tool_name.rsplit("__", 1)[-1] in REA_ALLOWED:
+            return "allow", ""
+        return "block", "REA ist in Auftraegen nur zum Ansehen der Web-Oberflaeche freigegeben"
 
     return "allow", ""
 
