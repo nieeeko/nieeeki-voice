@@ -15,3 +15,4 @@ voice-core/.jobs/
 desktop/node_modules/
 desktop/logs/
 .vscode
+desktop/dist/

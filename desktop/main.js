@@ -10,7 +10,7 @@
 // Sicherheit: contextIsolation + sandbox, die Seite bekommt nur die Funktion "Pegel melden".
 // Mikrofon nur fuer die eigene Oberflaeche; fremde Seiten oeffnen im normalen Browser.
 
-const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerSaveBlocker, screen, session, shell } =
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, powerSaveBlocker, screen, session, shell } =
   require("electron");
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -20,8 +20,9 @@ const path = require("node:path");
 
 const UI_URL = process.env.NIEEEKI_UI_URL || "http://localhost:3000";
 const VOICE_CORE_URL = process.env.NIEEEKI_VOICE_CORE_URL || "http://localhost:7860";
-const REPO = path.resolve(__dirname, "..");
 const UI_ORIGIN = new URL(UI_URL).origin;
+const CONFIG_FILE = path.join(app.getPath("userData"), "config.json");
+let REPO = null; // Projektordner mit voice-core/ und ui/, siehe resolveRepo()
 
 // Chromium-Drosselung fuer verdeckte/Hintergrund-Fenster aus (die Ursache der Abbrueche)
 app.commandLine.appendSwitch("disable-renderer-backgrounding");
@@ -40,6 +41,49 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
 
+// ---------- Projektordner ----------
+// Entwicklung: der Ordner ueber desktop/. Installiert: NIEEEKI_REPO, sonst die gemerkte Wahl, sonst
+// ~/Projekte/nieeeki-voice, sonst einmal nachfragen. Gueltig ist nur ein Ordner mit voice-core/bot.py.
+function isRepo(dir) {
+  return Boolean(dir) && fs.existsSync(path.join(dir, "voice-core", "bot.py"));
+}
+
+function readConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function resolveRepo() {
+  const candidates = app.isPackaged
+    ? [process.env.NIEEEKI_REPO, readConfig().repo, path.join(os.homedir(), "Projekte", "nieeeki-voice")]
+    : [process.env.NIEEEKI_REPO, path.resolve(__dirname, "..")];
+  const found = candidates.find(isRepo);
+  if (found || !app.isPackaged) return found || null;
+  const picked = dialog.showOpenDialogSync({
+    title: "nieeeki: Projektordner nieeeki-voice waehlen",
+    properties: ["openDirectory"],
+  })?.[0];
+  if (!isRepo(picked)) {
+    dialog.showErrorBox(
+      "nieeeki",
+      "Im gewaehlten Ordner fehlt voice-core/bot.py. nieeeki startet Voice-Core und Oberflaeche darum nicht selbst.",
+    );
+    return null;
+  }
+  fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify({ ...readConfig(), repo: picked }, null, 2));
+  return picked;
+}
+
+// Logs und PIDs immer in desktop/logs des Projekts: Entwicklungs- und installierte App sehen dieselben
+// Dienste (Neustart aus dem Tray trifft auch einen Voice-Core, den die andere Variante gestartet hat).
+function logDir() {
+  return REPO ? path.join(REPO, "desktop", "logs") : path.join(app.getPath("userData"), "logs");
+}
+
 // ---------- Dienste (Voice-Core, UI) ----------
 function isUp(url) {
   return new Promise((resolve) => {
@@ -56,9 +100,9 @@ function isUp(url) {
 }
 
 function startService(name, command, args, cwd) {
-  const logDir = path.join(__dirname, "logs");
-  fs.mkdirSync(logDir, { recursive: true });
-  const log = fs.openSync(path.join(logDir, `${name}.log`), "a");
+  const dir = logDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const log = fs.openSync(path.join(dir, `${name}.log`), "a");
   // argv-Liste ohne Shell
   const child = spawn(command, args, {
     cwd,
@@ -69,7 +113,7 @@ function startService(name, command, args, cwd) {
   child.on("exit", (code) => console.log(`${name} beendet (${code})`));
   children.push(child);
   // PID merken: so kann ein naechster Start einen verwaisten Dienst sicher beenden
-  fs.writeFileSync(path.join(logDir, `${name}.pid`), String(child.pid));
+  fs.writeFileSync(path.join(dir, `${name}.pid`), String(child.pid));
 }
 
 // Ganzen Prozessbaum beenden: "uv run" startet Python als Kindprozess; nur uv zu beenden liess den
@@ -80,7 +124,7 @@ function killTree(pid) {
 }
 
 function killStale(name) {
-  const pidFile = path.join(__dirname, "logs", `${name}.pid`);
+  const pidFile = path.join(logDir(), `${name}.pid`);
   if (!fs.existsSync(pidFile)) return;
   killTree(Number(fs.readFileSync(pidFile, "utf8")));
   fs.rmSync(pidFile, { force: true });
@@ -88,11 +132,11 @@ function killStale(name) {
 
 function stopServices() {
   for (const c of children.splice(0)) killTree(c.pid);
-  for (const name of ["voice-core", "ui"]) fs.rmSync(path.join(__dirname, "logs", `${name}.pid`), { force: true });
+  for (const name of ["voice-core", "ui"]) fs.rmSync(path.join(logDir(), `${name}.pid`), { force: true });
 }
 
 async function ensureServices() {
-  if (process.env.NIEEEKI_MANAGE_SERVICES === "off") return;
+  if (process.env.NIEEEKI_MANAGE_SERVICES === "off" || !REPO) return;
   // Reste eines frueheren Laufs dieser App beenden, damit immer der aktuelle Code laeuft
   killStale("voice-core");
   await new Promise((r) => setTimeout(r, 800));
@@ -236,6 +280,23 @@ function loginItem() {
   return app.isPackaged ? {} : { path: process.execPath, args: [__dirname] };
 }
 
+// Umstieg auf die installierte App: einen Autostart der Entwicklungs-App (electron.exe + desktop/)
+// uebernimmt sie, sonst starten beim Anmelden beide (doppelter Schleier, doppelte Dienste).
+function adoptDevAutostart() {
+  // Probestart aus desktop/dist im Projekt: Autostart nicht auf den Build-Ordner umbiegen
+  if (!app.isPackaged || !REPO || process.execPath.toLowerCase().startsWith(REPO.toLowerCase())) return;
+  const dev = {
+    path: path.join(REPO, "desktop", "node_modules", "electron", "dist", "electron.exe"),
+    args: [path.join(REPO, "desktop")],
+  };
+  const items = (app.getLoginItemSettings(dev).launchItems || []).filter(
+    (item) => item.path.toLowerCase() === dev.path.toLowerCase(),
+  );
+  if (!items.length) return;
+  for (const item of items) app.setLoginItemSettings({ ...dev, name: item.name, openAtLogin: false });
+  app.setLoginItemSettings({ openAtLogin: true });
+}
+
 function raisePriority() {
   for (const m of app.getAppMetrics()) {
     try {
@@ -246,8 +307,9 @@ function raisePriority() {
   }
 }
 
+// Installiert liegt das Symbol neben app.asar (extraResources), sonst neben main.js
 function iconPath() {
-  return path.join(REPO, "ui", "src", "app", "favicon.ico");
+  return app.isPackaged ? path.join(process.resourcesPath, "icon.ico") : path.join(__dirname, "icon.ico");
 }
 
 function createTray() {
@@ -340,6 +402,8 @@ app.whenReady().then(async () => {
   powerSaveBlocker.start("prevent-app-suspension");
   // Audio bekommt Vorrang, wenn Chrome & Co. beim Oeffnen kurz die CPU belegen (Aussetzer)
   setInterval(raisePriority, 5000);
+  REPO = resolveRepo();
+  adoptDevAutostart();
   createTray();
   await ensureServices();
   createMainWindow();
