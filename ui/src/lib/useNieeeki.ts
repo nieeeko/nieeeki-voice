@@ -76,10 +76,12 @@ export function useNieeeki() {
   const [canvasItems, setCanvasItems] = useState<CanvasItem[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
+  // Live-Bildschirm des Laptops (voice-core/screen_stream.py), nur auf Wunsch
+  const [screenOn, setScreenOn] = useState(false);
+  const [screenTrack, setScreenTrack] = useState<MediaStreamTrack | null>(null);
 
   // Weicher Stopp bei Unterbrechungen (Server schickt "leiser_stopp")
   const softStop = useRef<SoftStop>({ armedAt: null, fading: false });
-  const fadeOut = () => fadeOutAudio(audioRef.current, softStop.current);
   const restoreVolume = () => restoreAudio(audioRef.current, softStop.current);
 
   const setPresence = useCallback((p: Presence) => {
@@ -98,6 +100,12 @@ export function useNieeeki() {
         for (const v of meter.buf) sum += v * v;
         // RMS ungefaehr auf die Skala des Mikrofonpegels bringen (Sprache ~0,1-0,3)
         levels.current.bot = Math.min(1, Math.sqrt(sum / meter.buf.length) * 2);
+      }
+      // Weicher Stopp: in der naechsten Wortpause (spaetestens nach 600 ms) ausblenden. Hing frueher
+      // an onRemoteAudioLevel, das bei SmallWebRTC nie feuert, und war deshalb nie aktiv.
+      const stop = softStop.current;
+      if (stop.armedAt && !stop.fading && (levels.current.bot < 0.015 || performance.now() - stop.armedAt > 600)) {
+        fadeOutAudio(audioRef.current, stop);
       }
       const s = { ...levels.current };
       levels.current.cut = false;
@@ -119,7 +127,11 @@ export function useNieeeki() {
       enableCam: false,
       callbacks: {
         onBotReady: () => setPresence("idle"),
-        onDisconnected: () => setPresence("offline"),
+        onDisconnected: () => {
+          setPresence("offline");
+          setScreenOn(false);
+          setScreenTrack(null);
+        },
         onUserStartedSpeaking: () => {
           // Spricht nieeeki gerade, ist das eine Unterbrechung
           if (presenceRef.current === "speaking") levels.current.cut = true;
@@ -137,16 +149,13 @@ export function useNieeeki() {
         onLocalAudioLevel: (level) => {
           levels.current.user = level;
         },
-        onRemoteAudioLevel: (level) => {
-          levels.current.bot = level;
-          // Weicher Stopp: in der naechsten Wortpause (oder spaetestens nach 600 ms) ausblenden
-          const armed = softStop.current.armedAt;
-          if (armed && !softStop.current.fading && (level < 0.015 || performance.now() - armed > 600)) {
-            fadeOut();
-          }
-        },
         onTrackStarted: (track, participant) => {
-          if (participant?.local || track.kind !== "audio") return;
+          if (participant?.local) return;
+          if (track.kind === "video") {
+            setScreenTrack(track); // Videospur von nieeeki = Bildschirm-Stream des Laptops
+            return;
+          }
+          if (track.kind !== "audio") return;
           if (!audioRef.current) audioRef.current = new Audio();
           const stream = new MediaStream([track]);
           audioRef.current.srcObject = stream;
@@ -170,6 +179,7 @@ export function useNieeeki() {
             items?: { id: string; grund: string; detail: string }[];
           };
           if (msg?.type === "leiser_stopp") softStop.current.armedAt = performance.now();
+          if (msg?.type === "bildschirm") setScreenOn(Boolean((msg as { aktiv?: unknown }).aktiv));
           // Wer spricht (0 = Nikolaj, 1.. = weitere Stimmen) -> Farbe im Stimmen-Rand
           if (msg?.type === "sprecher" && typeof (msg as { index?: unknown }).index === "number")
             levels.current.speaker = (msg as { index: number }).index;
@@ -237,8 +247,15 @@ export function useNieeeki() {
     void botMeter.current?.ctx.close();
     botMeter.current = null;
     levels.current.bot = 0;
+    setScreenOn(false);
+    setScreenTrack(null);
     setPresence("offline");
   }, [setPresence]);
+
+  // Bildschirm-Stream an/aus; den Zustand bestaetigt der Voice-Core per Nachricht "bildschirm".
+  const toggleScreen = useCallback(() => {
+    clientRef.current?.sendClientMessage("bildschirm", { an: !screenOn });
+  }, [screenOn]);
 
   // Freigabe geht nur ueber die eigene WebRTC-Verbindung zum Voice-Core, nie per Sprache.
   const decide = useCallback((a: Approval, ja: boolean) => {
@@ -259,6 +276,9 @@ export function useNieeeki() {
     approvals,
     activities,
     acting,
+    screenOn,
+    screenTrack,
+    toggleScreen,
     decide,
     connect,
     disconnect,

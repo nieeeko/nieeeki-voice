@@ -343,6 +343,32 @@ body {
 }
 .presence .wake { margin-bottom: -6px; }
 
+/* Live-Bildschirm des Laptops (Fernzugriff) */
+.screen-toggle {
+  appearance: none; border-radius: 999px; padding: 10px 18px; cursor: pointer; margin-top: auto;
+  font: 600 15px var(--font-display), sans-serif; color: var(--ink);
+  background: transparent; border: 1px solid color-mix(in srgb, var(--voice-user) 60%, var(--rule));
+}
+.screen-toggle + .wake { margin-top: 0; }
+.screen-toggle[aria-pressed="true"] { background: color-mix(in srgb, var(--voice-user) 18%, transparent); }
+.shell[data-screen="true"] .canvas { flex-direction: column; gap: 20px; }
+.screen {
+  width: 100%; display: flex; flex-direction: column; gap: 10px; padding: 12px; border-radius: 18px;
+  background: color-mix(in srgb, var(--panel) 72%, transparent);
+  backdrop-filter: blur(18px) saturate(1.15);
+  border: 1px solid color-mix(in srgb, var(--rule) 60%, transparent);
+  animation: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.screen-video { width: 100%; aspect-ratio: 16 / 9; display: block; border-radius: 10px; background: #000; }
+.screen-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; color: var(--ink-soft); }
+.screen-live { display: inline-flex; align-items: center; gap: 8px; }
+.screen-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cut); animation: breathe 1.6s ease-in-out infinite; }
+.screen-hint { margin: 0; font-size: 14px; color: var(--ink-soft); }
+@media (max-width: 860px) {
+  /* Am Handy steht der Live-Bildschirm oben, die Steuerung darunter */
+  .shell[data-screen="true"] .canvas { order: -1; padding-bottom: 0; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .aurora span, .state-dot, .lines p, .activity-item, .canvas-item, .kinds li, .gate-card { animation: none !important; }
+  .aurora span, .state-dot, .lines p, .activity-item, .canvas-item, .kinds li, .gate-card, .screen, .screen-dot { animation: none !important; }
 }

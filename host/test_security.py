@@ -168,5 +168,26 @@ class OpenTests(unittest.TestCase):
         launch.assert_called_once_with("chrome.exe", ["https://www.amazon.de/s?k=lampe"])
 
 
+class LockTests(unittest.TestCase):
+    def test_locked_laptop_runs_no_input(self):
+        with mock.patch.object(host.wc, "is_locked", return_value=True), \
+             mock.patch.object(host.wc, "type_text") as typed, \
+             mock.patch.object(host.wc, "press") as pressed, \
+             mock.patch.object(host.wc, "click") as clicked, \
+             mock.patch.object(host.wc, "scroll") as scrolled, \
+             mock.patch.object(host.wc, "focus") as focused, \
+             mock.patch.object(host.wc, "screenshot") as shot:
+            results = [host.tastatur_tippen("hallo"), host.tasten_druecken("enter"), host.maus_klicken(10, 10),
+                       host.maus_scrollen(), host.bildschirmfoto(), host.fenster_fokussieren("Chrome")]
+        for result in results:
+            self.assertEqual(result["status"], "locked")
+        for action in (typed, pressed, clicked, scrolled, focused, shot):
+            action.assert_not_called()
+
+    def test_unlocked_desktop_detected(self):
+        # Die Tests laufen am entsperrten Rechner: dort ist der normale Desktop aktiv.
+        self.assertFalse(host.wc.is_locked())
+
+
 if __name__ == "__main__":
     unittest.main()

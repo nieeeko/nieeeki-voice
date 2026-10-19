@@ -10,4 +10,5 @@ dependencies = [
     "loguru>=0.7",
     "tzdata>=2026.5",
     "pyjwt[crypto]>=2.10",
+    "mss>=10",
 ]

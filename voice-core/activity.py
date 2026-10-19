@@ -38,7 +38,7 @@ def _status(result) -> str:
         return "fertig"
     if isinstance(data, dict):
         status = str(data.get("status", "")).lower()
-        if status in ("rejected", "blocked", "duplicate", "nicht_gefunden"):
+        if status in ("rejected", "blocked", "duplicate", "nicht_gefunden", "locked"):
             return "abgelehnt"
         if status == "error" or data.get("ok") is False:
             return "fehler"

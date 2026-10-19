@@ -202,6 +202,26 @@ def press(codes: list[int]) -> None:
     time.sleep(0.05)
 
 
+# ---------- Sperre ----------
+def is_locked() -> bool:
+    """Gesperrter Laptop (Win+L, Anmeldebildschirm, UAC-Dialog): dann ist nicht der normale Desktop
+    aktiv, Tippen, Klicken und Bildschirmfotos liefen ins Leere. OpenInputDesktop scheitert dort fuer
+    normale Prozesse, oder der aktive Desktop heisst nicht "Default"."""
+    user32 = ctypes.windll.user32
+    user32.OpenInputDesktop.restype = wintypes.HANDLE
+    user32.CloseDesktop.argtypes = [wintypes.HANDLE]
+    desk = user32.OpenInputDesktop(0, False, 0x0001)  # DESKTOP_READOBJECTS
+    if not desk:
+        return True
+    try:
+        name = ctypes.create_unicode_buffer(64)
+        needed = wintypes.DWORD()
+        user32.GetUserObjectInformationW(desk, 2, name, ctypes.sizeof(name), ctypes.byref(needed))  # UOI_NAME
+        return name.value.lower() != "default"
+    finally:
+        user32.CloseDesktop(desk)
+
+
 # ---------- Bildschirm und Maus ----------
 MAX_IMAGE_EDGE = 1568  # Kantenlaenge, die Claude-Bildmodelle ohne Verkleinern verarbeiten
 
