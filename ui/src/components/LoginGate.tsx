@@ -23,6 +23,16 @@ type Step =
   | { kind: "code"; factorId: string }
   | { kind: "fertig" };
 
+/**
+ * Supabase liefert den QR-Code als rohe, unkodierte SVG-Daten-URL mit Zeilenumbruch am Ende.
+ * next/image bricht daran ab ("cannot end with a space or control character"), also sauber
+ * kodiert neu aufbauen.
+ */
+export function qrDataUrl(raw: string) {
+  const svg = raw.slice(raw.indexOf(",") + 1).trim();
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 function CodeField() {
   return (
     <label>
@@ -85,7 +95,7 @@ export function LoginGate({ children }: { children: (signOut: () => void) => Rea
     setStep({
       kind: "einrichten",
       factorId: enrolled.id,
-      qr: enrolled.totp.qr_code,
+      qr: qrDataUrl(enrolled.totp.qr_code),
       secret: enrolled.totp.secret,
     });
   }, []);
