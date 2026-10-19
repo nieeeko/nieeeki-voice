@@ -44,16 +44,21 @@ eine Oberfläche mit Stimmlinie und Canvas sowie Werkzeuge für den Windows-PC.
 **Erledigt seit dem ersten Test:** Websuche, Canvas (Tabelle, Code, Dokument, Mermaid), Gedächtnis mit
 Lernen während des Gesprächs, PC-Host (Programme, Fenster, Tastatur, Bildschirm ansehen, Klicken),
 Entwicklungsaufträge an Claude Code mit Freigabe-Karten, Desktop-App mit Stimmen-Rand und Autostart,
-Zusammenfassung langer Gespräche, Sprecherfarben im Rand (erster Sprecher = Nikolaj).
+Zusammenfassung langer Gespräche, Sprecherfarben im Rand (erster Sprecher = Nikolaj), Login mit
+zweitem Faktor, Online-Zugang über Tailscale, Live-Bildschirm des Laptops in der Oberfläche
+(Knopf „Bildschirm zeigen“ oder „Zeig mir den Bildschirm“), Meldung bei gesperrtem Laptop.
 
-1. **Stimmabdruck** (ECAPA) in `speakers`: Nikolaj sicher erkennen statt „wer zuerst spricht“;
+1. **Fernsteuerung aus dem Live-Bild:** am Handy auf das Bild tippen = Klick am Laptop (über den
+   Host mit denselben Prüfungen wie `maus_klicken`).
+2. **Stimmabdruck** (ECAPA) in `speakers`: Nikolaj sicher erkennen statt „wer zuerst spricht“;
    nur seine Stimme darf Aufträge und PC-Aktionen auslösen.
-2. **Weckwort „nieeeki“** (openWakeWord mit eigenem Modell), damit kein Klick mehr nötig ist.
-3. **Eigene Stimme:** Aufnahme mit dem Vorlesetext → Soniox-Voice-Cloning, A/B-Test gegen Nina.
-4. **Freigaben auch für PC-Aktionen** (`powershell_lesen` → needs_approval) in den Freigabe-Karten.
-5. **Kalender und Mail** (zurückgestellt).
-6. **Runpod-Deployment:** WebRTC braucht UDP → TURN-Server oder Daily-Transport.
-7. **Desktop-App packen** (Installer, Startmenü-Eintrag) statt Start aus dem Repo.
+3. **Weckwort „nieeeki“** (openWakeWord mit eigenem Modell), damit kein Klick mehr nötig ist.
+4. **Eigene Stimme:** Aufnahme mit dem Vorlesetext → Soniox-Voice-Cloning, A/B-Test gegen Nina.
+5. **Sprach-Feinschliff, je eine Änderung pro Test:** Sprechtempo 1,1; „Ja“ während ihrer Frage.
+6. **Schleier 2.0:** bei Vollbild-Spielen und -Videos ausblenden, Lichtrahmen ums Zielfenster.
+7. **Freigaben auch für PC-Aktionen** (`powershell_lesen` → needs_approval) in den Freigabe-Karten.
+8. **Online ohne Tailscale-App** (Daily-Transport, Phase 2) und Voice-Core in der Cloud (Phase 3).
+9. **Kalender und Mail** (zurückgestellt), **Desktop-App packen** (Installer, Startmenü).
 
 Start: `scripts\nieeeki-desktop.cmd` (startet Voice-Core und Oberfläche selbst).
 
