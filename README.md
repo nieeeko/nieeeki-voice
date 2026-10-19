@@ -93,6 +93,8 @@ Grenzen: iOS pausiert die App im Hintergrund; das Gespräch läuft nur, solange 
 - „nieeeki“ sagen → sie antwortet „Ja?“ → Auftrag sagen. Nach 45 s Stille legt sie von selbst auf und
   lauscht wieder, aber nie mitten in einer Aktion, bei offener Freigabe, laufendem Entwicklungsauftrag
   oder Live-Bild. Per Klick begonnene Gespräche bleiben offen wie bisher.
+- Es läuft immer nur ein Gespräch: ein neues (z. B. vom Handy) beendet das laufende
+  (`voice-core/session_guard.py`). Hängt die Oberfläche aus (Abmelden, Neuladen), endet auch ihr Gespräch.
 - Der Lauscher (`voice-core/wake.py`) läuft lokal: kein Ton verlässt den PC, nichts wird gespeichert,
   etwa 3 % eines CPU-Kerns. Während eines Gesprächs pausiert er und gibt das Mikrofon frei.
 - Tray: Schalter „Weckwort "nieeeki"“. Schwelle in `voice-core/.env` (`NIEEEKI_WAKE_THRESHOLD`).
@@ -131,6 +133,11 @@ außer sie steht auf deiner Erlaubnisliste.
 
 - Die Oberfläche (lokal, Desktop-App und `https://nieeeki.nieeeko.com`) beginnt mit einer Anmeldung:
   E-Mail und Passwort, danach der Code aus der Authenticator-App. Beim ersten Mal QR-Code scannen.
+- **Angemeldet bleiben:** Mit Haken bleibt die Anmeldung über Neustarts erhalten, ohne Haken endet sie,
+  wenn Fenster oder App geschlossen werden (in der Desktop-App ist der Haken vorausgewählt, damit das
+  Weckwort nach dem Hochfahren gleich geht). Höchstens **1 Tag in der Web-UI, 1 Woche in der Desktop-App**
+  ab Passwort und Code, dann meldet die Oberfläche ab. Der Voice-Core prüft dasselbe am Token (`amr`)
+  und weist ältere Anmeldungen ab, auch wenn jemand die Oberfläche umgeht.
 - Der Voice-Core prüft jedes Token selbst (`voice-core/auth_gate.py`): nur `NIEEEKI_OWNER_ID` mit
   zweitem Faktor (aal2), sonst 401. WebSockets sind gesperrt, erlaubte Herkünfte siehe `.env.example`:
   Produktion, localhost und die Vercel-Vorschauen des Projekts (die sind nur mit Vercel-Anmeldung erreichbar).

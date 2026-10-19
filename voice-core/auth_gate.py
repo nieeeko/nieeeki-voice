@@ -8,6 +8,10 @@ er traegt keine Daten. WebSockets lehnt der Voice-Core ganz ab: nieeeki nutzt nu
 
 Signatur: ES256/RS256 lokal ueber die oeffentlichen Schluessel des Projekts (JWKS, gecacht).
 Stellt das Projekt noch HS256-Tokens aus, prueft Supabase selbst (GET /auth/v1/user).
+
+Hoechstalter der Anmeldung (ab Passwort/Code laut "amr" im Token, nicht ab dem letzten Erneuern):
+Desktop-App bzw. localhost 1 Woche, Web-UI 1 Tag. Die Oberflaeche meldet genauso ab; hier greift es
+auch, wenn jemand sie umgeht.
 """
 
 import asyncio
@@ -22,6 +26,29 @@ from loguru import logger
 
 CACHE_SECS = 60  # gepruefte Tokens so lange merken: ICE-Updates kommen im Sekundentakt
 LEEWAY_SECS = 30  # Uhren von Laptop und Supabase duerfen etwas auseinanderlaufen
+MAX_LOGIN_AGE_DESKTOP = 7 * 24 * 3600
+MAX_LOGIN_AGE_WEB = 24 * 3600
+# Die Desktop-App laedt die Oberflaeche von localhost:3000; alles andere gilt als Web-UI
+LOCAL_ORIGINS = ("http://localhost:3000", "http://127.0.0.1:3000")
+
+
+def login_time(claims: dict) -> float | None:
+    """Beginn der Anmeldung: fruehester Zeitstempel in amr (Passwort, danach Code)."""
+    entries = claims.get("amr")
+    stamps = [e.get("timestamp") for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
+    stamps = [t for t in stamps if isinstance(t, (int, float)) and not isinstance(t, bool)]
+    return float(min(stamps)) if stamps else None
+
+
+def max_login_age(origin: str) -> int:
+    return MAX_LOGIN_AGE_DESKTOP if origin in LOCAL_ORIGINS else MAX_LOGIN_AGE_WEB
+
+
+def _age_reason(login_at: float, now: float, max_age: int) -> str | None:
+    if now - login_at <= max_age:
+        return None
+    return "Anmeldung aelter als " + ("1 Tag" if max_age <= 24 * 3600 else f"{max_age // 86400} Tage") + \
+        ", bitte neu anmelden"
 
 
 class TokenVerifier:
@@ -44,18 +71,20 @@ class TokenVerifier:
                 f"{self.issuer}/.well-known/jwks.json", cache_keys=True, lifespan=600
             )
         self._transport = transport  # nur fuer Tests
-        self._ok_until: dict[str, float] = {}
+        self._ok_until: dict[str, tuple[float, float]] = {}  # Token-Hash -> (gueltig bis, angemeldet seit)
 
-    async def check(self, token: str) -> str | None:
-        """None, wenn das Token Nikolaj mit zweitem Faktor gehoert, sonst der Ablehnungsgrund."""
+    async def check(self, token: str, max_age: int = MAX_LOGIN_AGE_DESKTOP) -> str | None:
+        """None, wenn das Token Nikolaj mit zweitem Faktor gehoert und die Anmeldung hoechstens
+        max_age Sekunden alt ist, sonst der Ablehnungsgrund."""
         if not self.configured:
             return "Voice-Core ohne SUPABASE_URL oder NIEEEKI_OWNER_ID"
         if not token:
             return "nicht angemeldet"
         key = hashlib.sha256(token.encode()).hexdigest()
         now = time.time()
-        if self._ok_until.get(key, 0) > now:
-            return None
+        cached = self._ok_until.get(key)
+        if cached and cached[0] > now:
+            return _age_reason(cached[1], now, max_age)
         try:
             alg = jwt.get_unverified_header(token).get("alg")
             if alg in ("ES256", "RS256"):
@@ -82,9 +111,12 @@ class TokenVerifier:
             return "falsches Konto"
         if claims.get("aal") != "aal2":
             return "zweiter Faktor fehlt"
-        self._ok_until = {k: v for k, v in self._ok_until.items() if v > now}
-        self._ok_until[key] = min(float(claims["exp"]), now + CACHE_SECS)
-        return None
+        login_at = login_time(claims)
+        if login_at is None:
+            return "Anmeldezeitpunkt fehlt im Token"
+        self._ok_until = {k: v for k, v in self._ok_until.items() if v[0] > now}
+        self._ok_until[key] = (min(float(claims["exp"]), now + CACHE_SECS), login_at)
+        return _age_reason(login_at, now, max_age)
 
     async def _check_remote(self, token: str) -> dict:
         async with httpx.AsyncClient(timeout=5, transport=self._transport) as client:
@@ -131,7 +163,8 @@ class OwnerOnlyMiddleware:
 
         auth = next((v.decode("latin-1") for k, v in scope["headers"] if k == b"authorization"), "")
         token = auth[7:].strip() if auth[:7].lower() == "bearer " else ""
-        reason = await self.verifier.check(token)
+        origin = next((v.decode("latin-1") for k, v in scope["headers"] if k == b"origin"), "")
+        reason = await self.verifier.check(token, max_login_age(origin))
         if reason is None:
             await self.app(scope, receive, send)
             return

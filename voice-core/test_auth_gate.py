@@ -11,7 +11,14 @@ import httpx
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from auth_gate import OwnerOnlyMiddleware, TokenVerifier, allow_preview_origins
+from auth_gate import (
+    MAX_LOGIN_AGE_DESKTOP,
+    MAX_LOGIN_AGE_WEB,
+    OwnerOnlyMiddleware,
+    TokenVerifier,
+    allow_preview_origins,
+    max_login_age,
+)
 
 OWNER = "219cc195-1471-4bf6-a8b5-83b6a2fd8e8d"
 URL = "https://projekt.supabase.co"
@@ -32,7 +39,7 @@ class FakeJwks:
         return SimpleNamespace(key=KEY.public_key())
 
 
-def token(key=KEY, alg="ES256", **override):
+def token(key=KEY, alg="ES256", login_ago=60, **override):
     now = int(time.time())
     claims = {
         "sub": OWNER,
@@ -42,6 +49,8 @@ def token(key=KEY, alg="ES256", **override):
         "role": "authenticated",
         "iat": now,
         "exp": now + 3600,
+        # wie Supabase: Passwort, danach Code; beim Erneuern bleiben die Zeitstempel gleich
+        "amr": [{"method": "totp", "timestamp": now - login_ago + 20}, {"method": "password", "timestamp": now - login_ago}],
     }
     claims.update(override)
     return jwt.encode(claims, key, algorithm=alg, headers={"kid": "test"})
@@ -114,6 +123,38 @@ class TokenTests(unittest.IsolatedAsyncioTestCase):
         v = verifier(httpx.MockTransport(lambda r: httpx.Response(200, json={"id": OWNER})))
         reason = await v.check(token(key=HS_SECRET, alg="HS256", exp=int(time.time()) - 120))
         self.assertEqual(reason, "Anmeldung abgelaufen")
+
+
+class HoechstalterTests(unittest.IsolatedAsyncioTestCase):
+    """Desktop (localhost) 1 Woche, Web-UI 1 Tag ab Anmeldung, auch wenn das Token frisch erneuert ist."""
+
+    async def test_desktop_eine_woche(self):
+        v = verifier()
+        self.assertIsNone(await v.check(token(login_ago=6 * 86400), MAX_LOGIN_AGE_DESKTOP))
+        self.assertIn("7 Tage", await v.check(token(login_ago=8 * 86400), MAX_LOGIN_AGE_DESKTOP))
+
+    async def test_web_ein_tag(self):
+        v = verifier()
+        self.assertIsNone(await v.check(token(login_ago=23 * 3600), MAX_LOGIN_AGE_WEB))
+        self.assertIn("1 Tag", await v.check(token(login_ago=25 * 3600), MAX_LOGIN_AGE_WEB))
+
+    async def test_cache_umgeht_das_alter_nicht(self):
+        v = verifier()
+        t = token(login_ago=2 * 86400)
+        self.assertIsNone(await v.check(t, MAX_LOGIN_AGE_DESKTOP))
+        self.assertIsNotNone(await v.check(t, MAX_LOGIN_AGE_WEB))  # gleiches Token aus dem Netz
+
+    async def test_ohne_anmeldezeit_abgelehnt(self):
+        for amr in [None, [], "password", [{"method": "password"}], [{"method": "password", "timestamp": True}]]:
+            with self.subTest(amr=amr):
+                self.assertEqual(await verifier().check(token(amr=amr)), "Anmeldezeitpunkt fehlt im Token")
+
+    def test_herkunft_bestimmt_das_alter(self):
+        self.assertEqual(max_login_age("http://localhost:3000"), MAX_LOGIN_AGE_DESKTOP)
+        self.assertEqual(max_login_age("http://127.0.0.1:3000"), MAX_LOGIN_AGE_DESKTOP)
+        for origin in ["https://nieeeki.nieeeko.com", "https://nieeeki-voice-git-x-nieeeko.vercel.app", "", "http://localhost:3001"]:
+            with self.subTest(origin=origin):
+                self.assertEqual(max_login_age(origin), MAX_LOGIN_AGE_WEB)
 
 
 class MiddlewareTests(unittest.IsolatedAsyncioTestCase):
