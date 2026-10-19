@@ -37,7 +37,9 @@ CONNECT_TIMEOUT_SECS = 20
 LLM_TOOLS = [
     "webseite_oeffnen", "programm_oeffnen", "powershell_lesen", "system_info", "dark_mode",
     "fenster_auflisten", "fenster_fokussieren", "tastatur_tippen", "tasten_druecken", "maus_scrollen", "oeffnen_mit",
+    "als_admin",  # schlaegt nur vor: ausgefuehrt wird erst nach Freigabe oder per Erlaubnisliste
 ]
+MAX_TOKEN_LEN = 4096
 
 
 def host_client() -> MCPClient | None:
@@ -62,14 +64,18 @@ def host_client() -> MCPClient | None:
     return client
 
 
-async def decide_pc_approval(client: MCPClient | None, approval_id: object, ja: bool) -> dict:
-    """Nikolajs Klick auf eine Freigabe-Karte an den Host (der einzige Weg, eine PC-Aktion freizugeben)."""
+async def decide_pc_approval(client: MCPClient | None, approval_id: object, ja: bool,
+                             token: object = None, immer: bool = False) -> dict:
+    """Nikolajs Klick auf eine Freigabe-Karte an den Host (der einzige Weg, eine PC-Aktion freizugeben).
+    Admin-Freigaben tragen sein Supabase-Token; das prueft der Admin-Helfer selbst. Nie protokollieren."""
     aid = approval_id if isinstance(approval_id, str) else ""  # die UI schickt IDs immer als Text
     if client is None or not APPROVAL_ID.fullmatch(aid):
         return {"status": "error", "summary": "Unbekannte Freigabe"}
+    tok = token if isinstance(token, str) and len(token) <= MAX_TOKEN_LEN else ""
     raw = await client._call_tool_text(
         "freigabe_entscheiden",
-        {"approval_id": aid, "ja": bool(ja), "schluessel": client.nieeeki_approval_key},
+        {"approval_id": aid, "ja": bool(ja), "schluessel": client.nieeeki_approval_key,
+         "token": tok, "immer": immer is True},
     )
     logger.info("PC-Freigabe {} ({}): {}", aid, "ja" if ja else "nein", raw[:120])
     return json.loads(raw)

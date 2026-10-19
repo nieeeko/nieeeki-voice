@@ -98,18 +98,28 @@ function Nieeeki({ signOut }: { signOut: () => void }) {
           <section className="approvals" aria-label="Freigaben">
             <h2>Wartet auf deine Freigabe</h2>
             {approvals.map((a) => (
-              <article key={`${a.job}-${a.id}`} className="approval">
+              <article key={`${a.job}-${a.id}`} className="approval" data-admin={a.admin ? "true" : undefined}>
                 <p className="approval-what">
+                  {a.admin && <span className="approval-admin">Admin</span>}
                   <strong>{a.grund}</strong> <span>· {a.projekt}</span>
                 </p>
                 <code className="approval-detail">{a.detail}</code>
                 <div className="approval-actions">
-                  <button className="approve" onClick={() => decide(a, true)}>
+                  <button className="approve" onClick={() => void decide(a, true)}>
                     Freigeben
                   </button>
-                  <button className="reject" onClick={() => decide(a, false)}>
+                  <button className="reject" onClick={() => void decide(a, false)}>
                     Ablehnen
                   </button>
+                  {a.admin && (
+                    <button
+                      className="always"
+                      onClick={() => void decide(a, true, true)}
+                      title="Freigeben und diese Aktion künftig ohne Rückfrage erlauben"
+                    >
+                      Immer erlauben
+                    </button>
+                  )}
                 </div>
               </article>
             ))}

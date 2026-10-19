@@ -49,8 +49,8 @@ function restoreAudio(audio: HTMLAudioElement | null, state: SoftStop) {
   if (audio) audio.volume = 1;
 }
 
-/** Aktion eines Entwicklungsauftrags, die Nikolaj per Klick freigeben muss. */
-export type Approval = { job: string; projekt: string; id: string; grund: string; detail: string };
+/** Aktion, die Nikolaj per Klick freigeben muss (Entwicklungsauftrag, PC, PC als Admin). */
+export type Approval = { job: string; projekt: string; id: string; grund: string; detail: string; admin?: boolean };
 
 /** Ein Werkzeugaufruf von nieeeki fuer die Aktivitaets-Zeitleiste (activity.py im Voice-Core). */
 export type Activity = {
@@ -198,7 +198,7 @@ export function useNieeeki() {
             item?: CanvasItem;
             job?: string;
             projekt?: string;
-            items?: { id: string; grund: string; detail: string }[];
+            items?: { id: string; grund: string; detail: string; admin?: boolean }[];
           };
           if (msg?.type === "leiser_stopp") softStop.current.armedAt = performance.now();
           if (msg?.type === "bildschirm") setScreenOn(Boolean((msg as { aktiv?: unknown }).aktiv));
@@ -325,9 +325,13 @@ export function useNieeeki() {
   }, []);
 
   // Freigabe geht nur ueber die eigene WebRTC-Verbindung zum Voice-Core, nie per Sprache.
-  const decide = useCallback((a: Approval, ja: boolean) => {
-    clientRef.current?.sendClientMessage("freigabe", { job: a.job, id: a.id, entscheidung: ja ? "ja" : "nein" });
+  // Admin-Freigaben tragen Nikolajs Login; der Admin-Helfer prueft es selbst. immer = Erlaubnisliste.
+  const decide = useCallback(async (a: Approval, ja: boolean, immer = false) => {
     setApprovals((list) => list.filter((x) => !(x.job === a.job && x.id === a.id)));
+    const admin = a.admin && ja ? { token: (await accessToken()) ?? "", immer } : {};
+    clientRef.current?.sendClientMessage("freigabe", {
+      job: a.job, id: a.id, entscheidung: ja ? "ja" : "nein", ...admin,
+    });
   }, []);
 
   const acting = activities.some((a) => a.status === "laeuft");

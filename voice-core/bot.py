@@ -354,7 +354,8 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         # Freigabe-Karte fuer eine PC-Aktion (z. B. PowerShell); Entwicklungsauftraege gehen an dev
         if msg.type == "freigabe" and data.get("job") == "pc":
             ja = data.get("entscheidung") == "ja"
-            result = await decide_pc_approval(pc_client, data.get("id"), ja)
+            # token: Nikolajs Login fuer Admin-Freigaben (prueft der Admin-Helfer), immer: Erlaubnisliste
+            result = await decide_pc_approval(pc_client, data.get("id"), ja, data.get("token"), data.get("immer") is True)
             await report_pc_approval(task, ja, result)
             return
         await dev.on_client_message(msg.type, msg.data or {})

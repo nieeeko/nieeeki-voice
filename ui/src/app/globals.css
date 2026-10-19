@@ -155,6 +155,15 @@ body {
 }
 .approve { border: 0; background: var(--cut); color: var(--bg); }
 .reject { border: 1px solid var(--rule); background: transparent; color: var(--ink); }
+.approval-actions { flex-wrap: wrap; }
+.always { border: 1px dashed var(--cut); background: transparent; color: var(--cut); }
+/* Admin-Freigabe: deutlich anders als normale Karten, damit man nicht aus Gewohnheit freigibt */
+.approval[data-admin] { border-style: double; border-width: 4px; }
+.approval-what .approval-admin {
+  display: inline-block; margin-right: 8px; padding: 1px 8px; border-radius: 999px;
+  background: var(--cut); color: var(--bg); font: 700 12px var(--font-body), sans-serif;
+  letter-spacing: 0.04em; text-transform: uppercase; vertical-align: 2px;
+}
 
 .canvas-board { width: 100%; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .canvas-tabs { display: flex; gap: 8px; flex-wrap: wrap; }

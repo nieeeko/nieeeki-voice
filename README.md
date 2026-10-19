@@ -99,6 +99,31 @@ Grenzen: iOS pausiert die App im Hintergrund; das Gespräch läuft nur, solange 
 - Das Modell `voice-core/models/nieeeki.onnx` ist selbst trainiert (synthetische Stimmen), siehe
   [wakeword/README.md](wakeword/README.md).
 
+## Admin-Zugriff (mit Freigabe)
+
+nieeeki kann Dinge mit Administratorrechten erledigen, etwa Dienste, Treiber, Systemeinstellungen
+oder Klicks in Admin-Fenster wie das GIGABYTE Control Center. Jede Aktion braucht deine Freigabe,
+außer sie steht auf deiner Erlaubnisliste.
+
+- **Einrichten (einmal, am Laptop):** `scripts\admin-einrichten.cmd` doppelklicken und die Windows-Abfrage
+  bestätigen. Das legt `C:\ProgramData\nieeeki\admin` an (schreiben dürfen nur Administratoren) und richtet
+  die Aufgabe `\nieeeki\nieeeki-admin` ein, die den Helfer bei deiner Anmeldung mit Adminrechten startet.
+  Nach Änderungen an `voice-core/admin_helper.py` oder `auth_gate.py` erneut ausführen. Entfernen:
+  `scripts\admin-entfernen.ps1`.
+- **Ablauf:** nieeeki schlägt vor (`als_admin`: PowerShell-Befehl oder Klick) → Karte „Admin“ in der
+  Oberfläche mit genau dem Befehl bzw. Klickpunkt und Fenster → *Freigeben*, *Ablehnen* oder *Immer erlauben*.
+  Der Helfer prüft bei jeder Freigabe selbst dein Login mit zweitem Faktor; Text vom Modell reicht nie.
+- **Erlaubnisliste:** `C:\ProgramData\nieeeki\admin\erlaubt.json`, z. B.
+  `{"regeln": [{"aktion": "klicken", "fenster": "GIGABYTE CONTROL CENTER"}, {"aktion": "powershell", "befehl": "Restart-Service Spooler"}]}`.
+  PowerShell-Regeln gelten nur für genau diesen Befehl, Klick-Regeln für ein Fenster. „Immer erlauben“
+  trägt die Aktion ein; von Hand ändern nur als Administrator.
+- **Immer gesperrt**, auch mit Freigabe: Virenschutz aus, Bootkonfiguration, Konten und Gruppen, Passwörter,
+  Datenträger löschen, der Helfer selbst (Ordner, Erlaubnisliste, Aufgabe).
+- **Protokoll:** `C:\ProgramData\nieeeki\admin\admin-audit.jsonl` (jede Anfrage, nie dein Token).
+- **Grenze:** Das schützt gegen falsche Modell-Entscheidungen, untergeschobene Anweisungen aus Webseiten oder
+  Dateien und fremde Geräte. Gegen Schadsoftware, die schon unter deinem Windows-Konto läuft, hilft es nur
+  begrenzt (sie könnte Login und Schlüssel aus deinem Profil lesen).
+
 ## Anmeldung und Online-Zugang
 
 - Die Oberfläche (lokal, Desktop-App und `https://nieeeki.nieeeko.com`) beginnt mit einer Anmeldung:

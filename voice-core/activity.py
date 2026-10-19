@@ -19,6 +19,7 @@ DETAIL_KEYS = {
     "fenster_fokussieren": "fenster", "tasten_druecken": "kombination", "websuche": "anfrage",
     "canvas_zeigen": "titel", "auf_bildschirm_klicken": "ziel", "bildschirm_ansehen": "frage",
     "merken": "art", "entwicklung_vorbereiten": "projekt", "maus_scrollen": "richtung",
+    "als_admin": "aktion",
 }
 
 
@@ -56,6 +57,17 @@ def approval_card(name: str, args: dict, result) -> dict | None:
     if not data or data.get("status") != "needs_approval" or not data.get("approval_id"):
         return None
     args = args if isinstance(args, dict) else {}
+    if name == "als_admin":
+        # Admin: genau das zeigen, was der Helfer nach der Freigabe ausfuehrt
+        if args.get("aktion") == "klicken":
+            detail = f"Klick bei {args.get('x')},{args.get('y')} in {data.get('fenster') or 'unbekanntes Fenster'}"
+        else:
+            detail = str(args.get("befehl") or "")
+        return {
+            "type": "freigaben", "job": "pc", "projekt": "Laptop als Admin",
+            "items": [{"id": str(data["approval_id"]), "grund": str(args.get("grund") or "Admin-Aktion")[:120],
+                       "detail": detail[:300], "admin": True}],
+        }
     return {
         "type": "freigaben", "job": "pc", "projekt": "Laptop",
         "items": [{

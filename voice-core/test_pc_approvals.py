@@ -37,9 +37,28 @@ class EntscheidungTests(unittest.IsolatedAsyncioTestCase):
         host = self.host()
         result = await pc_host.decide_pc_approval(host, "a1b2c3d4", True)
         host._call_tool_text.assert_awaited_once_with(
-            "freigabe_entscheiden", {"approval_id": "a1b2c3d4", "ja": True, "schluessel": "k" * 32}
+            "freigabe_entscheiden",
+            {"approval_id": "a1b2c3d4", "ja": True, "schluessel": "k" * 32, "token": "", "immer": False},
         )
         self.assertEqual(result["status"], "success")
+
+    async def test_admin_freigabe_traegt_token_und_immer(self):
+        host = self.host()
+        await pc_host.decide_pc_approval(host, "a1b2c3d4", True, "jwt-von-nikolaj", True)
+        args = host._call_tool_text.await_args.args[1]
+        self.assertEqual((args["token"], args["immer"]), ("jwt-von-nikolaj", True))
+
+    async def test_nur_echte_werte_fuer_token_und_immer(self):
+        for token, immer in [(123, "true"), ("x" * 5000, 1), (None, None)]:
+            with self.subTest(token=str(token)[:10], immer=immer):
+                host = self.host()
+                await pc_host.decide_pc_approval(host, "a1b2c3d4", True, token, immer)
+                args = host._call_tool_text.await_args.args[1]
+                self.assertEqual((args["token"], args["immer"]), ("", False))
+
+    def test_admin_steht_dem_modell_zur_verfuegung_freigabe_nicht(self):
+        self.assertIn("als_admin", pc_host.LLM_TOOLS)
+        self.assertNotIn("freigabe_entscheiden", pc_host.LLM_TOOLS)
 
     async def test_unsinnige_ids_gehen_nicht_an_den_host(self):
         host = self.host()
@@ -76,6 +95,17 @@ class KarteTests(unittest.TestCase):
             {"id": "a1b2c3d4", "grund": "Notepad schliessen", "detail": "Stop-Process -Name notepad"}
         ])
         self.assertEqual(activity._status(result), "wartet")
+
+    def test_admin_karte_zeigt_genau_die_aktion(self):
+        result = json.dumps({"status": "needs_approval", "admin": True, "approval_id": "a1b2c3d4"})
+        card = activity.approval_card("als_admin", {"aktion": "powershell", "befehl": "Restart-Service Spooler",
+                                                    "grund": "Drucker haengt"}, result)
+        self.assertEqual(card["items"], [{"id": "a1b2c3d4", "grund": "Drucker haengt",
+                                          "detail": "Restart-Service Spooler", "admin": True}])
+        self.assertEqual(card["projekt"], "Laptop als Admin")
+        klick = json.dumps({"status": "needs_approval", "approval_id": "a1b2c3d4", "fenster": "GIGABYTE CONTROL CENTER"})
+        card = activity.approval_card("als_admin", {"aktion": "klicken", "x": 600, "y": 400, "grund": "Turbo"}, klick)
+        self.assertEqual(card["items"][0]["detail"], "Klick bei 600,400 in GIGABYTE CONTROL CENTER")
 
     def test_andere_ergebnisse_ohne_karte(self):
         for result in ['{"status": "success"}', '{"status": "needs_approval"}', "kein json", None]:
