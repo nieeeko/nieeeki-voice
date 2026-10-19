@@ -336,9 +336,19 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         if msg.type == "bildschirm":
             await streamer.set_active(bool((msg.data or {}).get("an")), "Knopf")
             return
-        if msg.type == "bildschirm_klick":  # Tippen im Live-Bild am Handy
-            data = msg.data or {}
+        # Fernsteuerung aus dem Live-Bild am Handy (screen_stream.py, ausgefuehrt vom Host)
+        data = msg.data or {}
+        if msg.type == "bildschirm_klick":
             await streamer.click(data.get("x"), data.get("y"), pc_client)
+            return
+        if msg.type == "bildschirm_scrollen":
+            await streamer.scroll(data.get("x"), data.get("y"), data.get("richtung"), data.get("schritte"), pc_client)
+            return
+        if msg.type == "bildschirm_tippen":
+            await streamer.type_text(data.get("text"), bool(data.get("enter")), pc_client)
+            return
+        if msg.type == "bildschirm_taste":
+            await streamer.press_key(data.get("taste"), pc_client)
             return
         await dev.on_client_message(msg.type, msg.data or {})
 

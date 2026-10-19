@@ -47,7 +47,8 @@ Entwicklungsaufträge an Claude Code mit Freigabe-Karten, Desktop-App mit Stimme
 Zusammenfassung langer Gespräche, Sprecherfarben im Rand (erster Sprecher = Nikolaj), Login mit
 zweitem Faktor, Online-Zugang über Tailscale, Live-Bildschirm des Laptops in der Oberfläche
 (Knopf „Bildschirm zeigen“ oder „Zeig mir den Bildschirm“) mit Fernsteuerung (Schalter „Steuern“:
-Tippen im Live-Bild = Klick am Laptop, geprüft vom Host), Meldung bei gesperrtem Laptop,
+Tippen = Klick, Wischen = Scrollen, Text und Tasten Enter/Rücktaste/Tab/Esc, alles geprüft vom
+Host), Meldung bei gesperrtem Laptop,
 Entwicklungsaufträge mit Art planen/umsetzen/reviewen und passenden ECC-Werkzeugen.
 
 1. **Stimmabdruck** (ECAPA) in `speakers`: Nikolaj sicher erkennen statt „wer zuerst spricht“;
@@ -55,7 +56,7 @@ Entwicklungsaufträge mit Art planen/umsetzen/reviewen und passenden ECC-Werkzeu
 2. **Weckwort „nieeeki“** (openWakeWord mit eigenem Modell), damit kein Klick mehr nötig ist.
 3. **Eigene Stimme:** Aufnahme mit dem Vorlesetext → Soniox-Voice-Cloning, A/B-Test gegen Nina.
 4. **Sprach-Feinschliff, je eine Änderung pro Test:** Sprechtempo 1,1; „Ja“ während ihrer Frage.
-5. **Fernsteuerung erweitern:** Text vom Handy tippen, Scrollen im Live-Bild.
+5. **Fernsteuerung verfeinern:** Rechtsklick (langes Drücken), Zoom ins Live-Bild für kleine Schrift.
 6. **Schleier 2.0:** bei Vollbild-Spielen und -Videos ausblenden, Lichtrahmen ums Zielfenster.
 7. **Freigaben auch für PC-Aktionen** (`powershell_lesen` → needs_approval) in den Freigabe-Karten.
 8. **Online ohne Tailscale-App** (Daily-Transport, Phase 2) und Voice-Core in der Cloud (Phase 3).

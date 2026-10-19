@@ -184,6 +184,26 @@ class LockTests(unittest.TestCase):
         for action in (typed, pressed, clicked, scrolled, focused, shot):
             action.assert_not_called()
 
+    def test_scroll_at_point_checks_target(self):
+        chrome = {"hwnd": 2, "titel": "Amazon - Chrome", "programm": "chrome.exe"}
+        konsole = {"hwnd": 3, "titel": "PowerShell", "programm": "powershell.exe"}
+        with mock.patch.object(host.wc, "is_locked", return_value=False), \
+             mock.patch.object(host.wc, "screen_bounds", return_value=(0, 0, 2560, 1440)), \
+             mock.patch.object(host.wc, "window_at", return_value=chrome), \
+             mock.patch.object(host.wc, "scroll") as scrolled:
+            ok = host.maus_scrollen("runter", 3, x=1200, y=700)
+            outside = host.maus_scrollen("runter", 3, x=5000, y=700)
+        self.assertEqual(ok["status"], "success")
+        scrolled.assert_called_once_with(1200, 700, -3)
+        self.assertEqual(outside["status"], "rejected")
+        with mock.patch.object(host.wc, "is_locked", return_value=False), \
+             mock.patch.object(host.wc, "screen_bounds", return_value=(0, 0, 2560, 1440)), \
+             mock.patch.object(host.wc, "window_at", return_value=konsole), \
+             mock.patch.object(host.wc, "scroll") as scrolled:
+            blocked = host.maus_scrollen("hoch", 3, x=100, y=100)
+        scrolled.assert_not_called()
+        self.assertEqual(blocked["status"], "rejected")
+
     def test_unlocked_desktop_detected(self):
         # Die Tests laufen am entsperrten Rechner: dort ist der normale Desktop aktiv.
         self.assertFalse(host.wc.is_locked())
