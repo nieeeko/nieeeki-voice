@@ -55,8 +55,20 @@ Zusammenfassung langer Gespräche, Sprecherfarben im Rand (erster Sprecher = Nik
 6. **Runpod-Deployment:** WebRTC braucht UDP → TURN-Server oder Daily-Transport.
 7. **Desktop-App packen** (Installer, Startmenü-Eintrag) statt Start aus dem Repo.
 
-Start: `scripts
-ieeeki-desktop.cmd` (startet Voice-Core und Oberfläche selbst).
+Start: `scripts\nieeeki-desktop.cmd` (startet Voice-Core und Oberfläche selbst).
+
+## Anmeldung und Online-Zugang
+
+- Die Oberfläche (lokal, Desktop-App und `https://nieeeki.nieeeko.com`) beginnt mit einer Anmeldung:
+  E-Mail und Passwort, danach der Code aus der Authenticator-App. Beim ersten Mal QR-Code scannen.
+- Der Voice-Core prüft jedes Token selbst (`voice-core/auth_gate.py`): nur `NIEEEKI_OWNER_ID` mit
+  zweitem Faktor (aal2), sonst 401. WebSockets sind gesperrt, erlaubte Herkünfte siehe `.env.example`.
+- Online über Tailscale (Phase 1, kostenlos für private Nutzung, keine offenen Ports am Router):
+  1. Tailscale auf Laptop und Handy, beide mit demselben Konto anmelden.
+  2. Auf dem Laptop: `tailscale serve --bg 7860` (Funnel bleibt aus: nur im eigenen Tailnet erreichbar).
+  3. In Vercel `NEXT_PUBLIC_VOICE_CORE_URL=https://<laptop>.<tailnet>.ts.net` setzen und neu deployen.
+  4. Auf dem Handy (Tailscale an) `https://nieeeki.nieeeko.com` öffnen und anmelden.
+- Domain: CNAME `nieeeki` bei Hostinger auf Vercel (seit 19.10.2026). Produktion kommt von `main`.
 
 Ausführlicher Bauplan: Doc „nieeeki – Bauplan für den eigenen Jarvis“ (Architektur, 10-Schritte-Plan, Entscheidungen).
 
@@ -100,7 +112,7 @@ Dann `http://localhost:3000` öffnen → „Gespräch starten“ → Mikrofon er
 
 | Datei | Gelesen von | Inhalt |
 | --- | --- | --- |
-| `.env` (Hauptordner oder `voice-core/`) | Voice-Core (Python) | `SONIOX_API_KEY`, `ANTHROPIC_API_KEY`, später `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NIEEEKI_OWNER_ID`, `VOYAGE_API_KEY` |
+| `.env` (Hauptordner oder `voice-core/`) | Voice-Core (Python) | `SONIOX_API_KEY`, `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `NIEEEKI_OWNER_ID`, `VOYAGE_API_KEY`; optional `SONIOX_TERMS`, `PIPECAT_ALLOWED_ORIGINS` |
 | `ui/.env.local` | Next.js | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_NIEEEKI_DB_SCHEMA`, `NEXT_PUBLIC_VOICE_CORE_URL` |
 
 - Python liest nur eine Datei namens **`.env`**, keine `.env.local`.
