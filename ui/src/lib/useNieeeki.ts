@@ -261,6 +261,15 @@ export function useNieeeki() {
   const clickScreen = useCallback((x: number, y: number) => {
     clientRef.current?.sendClientMessage("bildschirm_klick", { x, y });
   }, []);
+  const scrollScreen = useCallback((x: number, y: number, richtung: "hoch" | "runter", schritte: number) => {
+    clientRef.current?.sendClientMessage("bildschirm_scrollen", { x, y, richtung, schritte });
+  }, []);
+  const typeOnScreen = useCallback((text: string, enter: boolean) => {
+    clientRef.current?.sendClientMessage("bildschirm_tippen", { text, enter });
+  }, []);
+  const pressOnScreen = useCallback((taste: string) => {
+    clientRef.current?.sendClientMessage("bildschirm_taste", { taste });
+  }, []);
 
   // Freigabe geht nur ueber die eigene WebRTC-Verbindung zum Voice-Core, nie per Sprache.
   const decide = useCallback((a: Approval, ja: boolean) => {
@@ -285,6 +294,9 @@ export function useNieeeki() {
     screenTrack,
     toggleScreen,
     clickScreen,
+    scrollScreen,
+    typeOnScreen,
+    pressOnScreen,
     decide,
     connect,
     disconnect,

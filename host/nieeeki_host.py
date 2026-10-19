@@ -454,19 +454,22 @@ def maus_klicken(x: int, y: int, taste: str = "links", doppelt: bool = False) ->
 
 
 @mcp.tool()
-def maus_scrollen(richtung: str = "runter", schritte: int = 5) -> dict:
-    """Scrollt im Fenster vorne (change). richtung: hoch oder runter, schritte 1-20."""
+def maus_scrollen(richtung: str = "runter", schritte: int = 5, x: int | None = None, y: int | None = None) -> dict:
+    """Scrollt im Fenster vorne (change). richtung: hoch oder runter, schritte 1-20. x/y nur, wenn
+    an einer bestimmten Bildschirmstelle gescrollt werden soll (sonst Mitte des Fensters vorne)."""
     if richtung not in ("hoch", "runter"):
         return {"status": "rejected", "summary": "richtung: hoch oder runter"}
     if locked := _locked("maus_scrollen"):
         return locked
     steps = max(1, min(20, int(schritte)))
-    win32gui = wc._win32()[0]
-    left, top, right, bottom = win32gui.GetWindowRect(win32gui.GetForegroundWindow())
-    x, y = (left + right) // 2, (top + bottom) // 2
+    if x is None or y is None:
+        win32gui = wc._win32()[0]
+        left, top, right, bottom = win32gui.GetWindowRect(win32gui.GetForegroundWindow())
+        x, y = (left + right) // 2, (top + bottom) // 2
     try:
+        x, y = int(x), int(y)
         target = _check_point(x, y)
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
         return {"status": "rejected", "summary": str(e)}
     _audit({"tool": "maus_scrollen", "richtung": richtung, "schritte": steps, "ziel": target["titel"][:120], "risk": "change"})
     wc.scroll(x, y, steps if richtung == "hoch" else -steps)

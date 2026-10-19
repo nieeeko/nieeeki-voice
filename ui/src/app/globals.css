@@ -366,7 +366,7 @@ body {
 .screen-hint { margin: 0; font-size: 14px; color: var(--ink-soft); }
 .screen-stage { position: relative; overflow: hidden; border-radius: 10px; }
 .screen-stage[data-control="true"] .screen-video {
-  cursor: crosshair; touch-action: manipulation;
+  cursor: crosshair; touch-action: none; /* Wischen scrollt den Laptop, nicht die Seite */
   box-shadow: inset 0 0 0 2px var(--voice-user);
 }
 .screen-ripple {
@@ -382,6 +382,18 @@ body {
   border: 1px solid color-mix(in srgb, var(--voice-user) 60%, var(--rule));
 }
 .screen-control[aria-pressed="true"] { background: var(--voice-user); color: var(--bg); border-color: var(--voice-user); }
+.screen-type { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.screen-type input {
+  flex: 1 1 180px; min-width: 0; padding: 10px 12px; border-radius: 10px;
+  font: 500 16px var(--font-body), sans-serif; color: var(--ink);
+  border: 1px solid var(--rule); background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+.screen-keys { display: inline-flex; gap: 6px; }
+.screen-key {
+  appearance: none; min-width: 40px; padding: 8px 10px; border-radius: 10px; cursor: pointer;
+  font: 600 14px var(--font-body), sans-serif; color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 7%, transparent); border: 1px solid var(--rule);
+}
 @media (max-width: 860px) {
   /* Am Handy steht der Live-Bildschirm oben, die Steuerung darunter */
   .shell[data-screen="true"] .canvas { order: -1; padding-bottom: 0; }

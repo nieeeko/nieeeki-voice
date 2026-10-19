@@ -30,7 +30,10 @@ from pipecat.services.llm_service import FunctionCallParams
 WIDTH = int(os.getenv("SCREEN_STREAM_WIDTH") or 1280)
 HEIGHT = WIDTH * 9 // 16
 FPS = float(os.getenv("SCREEN_STREAM_FPS") or 4)
-CLICK_MIN_INTERVAL = 0.3  # Sekunden: ein Doppeltippen am Handy wird nicht zu zwei Klicks
+# Fernsteuerung aus dem Live-Bild: Mindestabstand je Art (ein Doppeltippen wird nicht zu zwei Klicks)
+MIN_INTERVAL = {"klick": 0.3, "tippen": 0.3, "taste": 0.15, "scrollen": 0.1}
+REMOTE_KEYS = {"enter", "esc", "backspace", "tab"}
+MAX_REMOTE_TEXT = 500
 
 ES_CONTINUOUS = 0x80000000
 ES_DISPLAY_REQUIRED = 0x00000002
@@ -172,39 +175,89 @@ class ScreenStreamer(FrameProcessor):
         self._task: asyncio.Task | None = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bildschirm")
         self._grabber = _Grabber()
-        self._last_click = 0.0
+        self._last: dict[str, float] = {}
 
     @property
     def active(self) -> bool:
         return self._task is not None
 
-    async def click(self, fx: object, fy: object, pc_client) -> dict:
-        """Tippen im Live-Bild = Linksklick am Laptop. Nur bei laufendem Stream; der Host prueft das
-        Ziel wie bei jedem Klick (gesperrte Fenster, Sperrbildschirm) und schreibt den Audit-Eintrag."""
+    # ---------- Fernsteuerung aus dem Live-Bild ----------
+    # Nur bei laufendem Stream und ueber die angemeldete Verbindung. Ausgefuehrt wird alles vom Host,
+    # mit denselben Pruefungen wie bei nieekis eigenen Aktionen (gesperrte Fenster, Sperrbildschirm,
+    # Audit-Eintrag).
+
+    def _too_soon(self, kind: str) -> bool:
         now = asyncio.get_running_loop().time()
-        if self.active and now - self._last_click < CLICK_MIN_INTERVAL:
-            return {"status": "ignored"}
-        self._last_click = now
+        if self.active and now - self._last.get(kind, -1e9) < MIN_INTERVAL[kind]:
+            return True
+        self._last[kind] = now
+        return False
+
+    def _point(self, fx: object, fy: object) -> tuple[int, int] | None:
         try:
-            point = frame_to_screen(self._grabber.geometry, float(fx), float(fy))
+            return frame_to_screen(self._grabber.geometry, float(fx), float(fy))
         except (TypeError, ValueError):
-            point = None
+            return None
+
+    async def _remote(self, name: str, pc_client, tool: str | None, args: dict, reason: str = "") -> dict:
+        """Gemeinsamer Weg: pruefen, Host aufrufen, Ergebnis in der Zeitleiste melden."""
         if not self.active or pc_client is None:
             result = {"status": "rejected", "summary": "Live-Bild ist aus"}
-        elif point is None:
-            result = {"status": "rejected", "summary": "Stelle liegt nicht auf dem Bildschirm"}
+        elif tool is None:
+            result = {"status": "rejected", "summary": reason}
         else:
-            raw = await pc_client._call_tool_text("maus_klicken", {"x": point[0], "y": point[1]})
-            logger.info("Fernklick bei {},{}: {}", point[0], point[1], raw[:120])
+            raw = await pc_client._call_tool_text(tool, args)
+            shown = {**args, "text": f"{len(args['text'])} Zeichen"} if "text" in args else args
+            logger.info("Fernsteuerung {} {}: {}", tool, shown, raw[:120])
             result = json.loads(raw)
-        status = {"success": "fertig", "locked": "abgelehnt", "rejected": "abgelehnt"}.get(
+        status = {"success": "fertig", "locked": "abgelehnt", "rejected": "abgelehnt", "duplicate": "abgelehnt"}.get(
             str(result.get("status")), "fehler"
         )
         await self.push_frame(RTVIServerMessageFrame(data={
-            "type": "aktivitaet", "id": f"fernklick-{uuid.uuid4().hex[:8]}", "name": "fernklick",
+            "type": "aktivitaet", "id": f"{name}-{uuid.uuid4().hex[:8]}", "name": name,
             "detail": str(result.get("summary", ""))[:80], "status": status,
         }))
         return result
+
+    async def click(self, fx: object, fy: object, pc_client) -> dict:
+        """Tippen im Live-Bild = Linksklick am Laptop."""
+        if self._too_soon("klick"):
+            return {"status": "ignored"}
+        point = self._point(fx, fy)
+        if point is None:
+            return await self._remote("fernklick", pc_client, None, {}, "Stelle liegt nicht auf dem Bildschirm")
+        return await self._remote("fernklick", pc_client, "maus_klicken", {"x": point[0], "y": point[1]})
+
+    async def scroll(self, fx: object, fy: object, richtung: object, schritte: object, pc_client) -> dict:
+        """Wischen im Live-Bild = Scrollen an dieser Stelle."""
+        if self._too_soon("scrollen"):
+            return {"status": "ignored"}
+        point = self._point(fx, fy)
+        if richtung not in ("hoch", "runter") or point is None:
+            return await self._remote("fernscrollen", pc_client, None, {}, "Stelle oder Richtung ungueltig")
+        try:
+            steps = max(1, min(10, int(schritte)))
+        except (TypeError, ValueError):
+            steps = 3
+        return await self._remote("fernscrollen", pc_client, "maus_scrollen",
+                                  {"richtung": richtung, "schritte": steps, "x": point[0], "y": point[1]})
+
+    async def type_text(self, text: object, enter: bool, pc_client) -> dict:
+        """Text vom Handy ins Fenster vorne tippen (optional mit Enter)."""
+        if self._too_soon("tippen"):
+            return {"status": "ignored"}
+        if not isinstance(text, str) or not text.strip() or len(text) > MAX_REMOTE_TEXT:
+            return await self._remote("ferntippen", pc_client, None, {},
+                                      f"Text fehlt oder ist laenger als {MAX_REMOTE_TEXT} Zeichen")
+        return await self._remote("ferntippen", pc_client, "tastatur_tippen", {"text": text + ("\n" if enter else "")})
+
+    async def press_key(self, key: object, pc_client) -> dict:
+        """Einzelne Taste vom Handy: Enter, Esc, Ruecktaste oder Tab."""
+        if self._too_soon("taste"):
+            return {"status": "ignored"}
+        if key not in REMOTE_KEYS:
+            return await self._remote("ferntaste", pc_client, None, {}, "Diese Taste geht vom Handy nicht")
+        return await self._remote("ferntaste", pc_client, "tasten_druecken", {"kombination": key})
 
     async def set_active(self, on: bool, source: str) -> bool:
         """Stream an/aus; die Oberflaeche erfaehrt den Zustand immer per Nachricht."""

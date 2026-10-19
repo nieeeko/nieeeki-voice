@@ -117,6 +117,38 @@ class FernklickTests(unittest.IsolatedAsyncioTestCase):
         host._call_tool_text.assert_not_awaited()
         self.assertEqual(result["status"], "rejected")
 
+    async def test_wischen_scrollt_an_der_stelle(self):
+        streamer, host = _laufender_streamer()
+        await streamer.scroll(0.25, 0.5, "runter", 4, host)
+        host._call_tool_text.assert_awaited_once_with(
+            "maus_scrollen", {"richtung": "runter", "schritte": 4, "x": -1920, "y": 720}
+        )
+        streamer, host = _laufender_streamer()
+        for richtung in ("seitwaerts", None):
+            streamer._last.clear()
+            self.assertEqual((await streamer.scroll(0.5, 0.5, richtung, 3, host))["status"], "rejected")
+        host._call_tool_text.assert_not_awaited()
+
+    async def test_tippen_und_enter(self):
+        streamer, host = _laufender_streamer()
+        await streamer.type_text("Hallo Anna", True, host)
+        host._call_tool_text.assert_awaited_once_with("tastatur_tippen", {"text": "Hallo Anna\n"})
+        streamer, host = _laufender_streamer()
+        for text in ["", "   ", None, "x" * (s.MAX_REMOTE_TEXT + 1)]:
+            streamer._last.clear()
+            self.assertEqual((await streamer.type_text(text, False, host))["status"], "rejected")
+        host._call_tool_text.assert_not_awaited()
+
+    async def test_nur_erlaubte_tasten(self):
+        streamer, host = _laufender_streamer()
+        await streamer.press_key("enter", host)
+        host._call_tool_text.assert_awaited_once_with("tasten_druecken", {"kombination": "enter"})
+        streamer, host = _laufender_streamer()
+        for taste in ["win", "alt+f4", "ctrl+alt+delete", None]:
+            streamer._last.clear()
+            self.assertEqual((await streamer.press_key(taste, host))["status"], "rejected")
+        host._call_tool_text.assert_not_awaited()
+
     async def test_unsinnige_stellen_klicken_nicht(self):
         for fx, fy in [("x", 0.5), (None, 0.5), (float("nan"), 0.5), (2, 0.5), (0.5, -1)]:
             with self.subTest(fx=fx, fy=fy):
