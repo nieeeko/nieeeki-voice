@@ -45,6 +45,7 @@ function Nieeeki({ signOut }: { signOut: () => void }) {
     screenOn,
     screenTrack,
     toggleScreen,
+    clickScreen,
     decide,
     connect,
     disconnect,
@@ -138,7 +139,7 @@ function Nieeeki({ signOut }: { signOut: () => void }) {
       </section>
 
       <section className="canvas" aria-label="Canvas">
-        {screenOn && <ScreenView track={screenTrack} />}
+        {screenOn && <ScreenView track={screenTrack} onTap={clickScreen} />}
         {canvasItems.length > 0 ? (
           <Canvas items={canvasItems} />
         ) : screenOn ? null : (

@@ -257,6 +257,11 @@ export function useNieeeki() {
     clientRef.current?.sendClientMessage("bildschirm", { an: !screenOn });
   }, [screenOn]);
 
+  // Tippen im Live-Bild (0..1 relativ zum Bild) = Klick am Laptop; der Host prueft das Ziel.
+  const clickScreen = useCallback((x: number, y: number) => {
+    clientRef.current?.sendClientMessage("bildschirm_klick", { x, y });
+  }, []);
+
   // Freigabe geht nur ueber die eigene WebRTC-Verbindung zum Voice-Core, nie per Sprache.
   const decide = useCallback((a: Approval, ja: boolean) => {
     clientRef.current?.sendClientMessage("freigabe", { job: a.job, id: a.id, entscheidung: ja ? "ja" : "nein" });
@@ -279,6 +284,7 @@ export function useNieeeki() {
     screenOn,
     screenTrack,
     toggleScreen,
+    clickScreen,
     decide,
     connect,
     disconnect,

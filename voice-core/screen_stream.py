@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import json
 import os
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from ctypes import wintypes
+from dataclasses import dataclass
 
 from loguru import logger
 from PIL import Image, ImageDraw
@@ -27,6 +30,7 @@ from pipecat.services.llm_service import FunctionCallParams
 WIDTH = int(os.getenv("SCREEN_STREAM_WIDTH") or 1280)
 HEIGHT = WIDTH * 9 // 16
 FPS = float(os.getenv("SCREEN_STREAM_FPS") or 4)
+CLICK_MIN_INTERVAL = 0.3  # Sekunden: ein Doppeltippen am Handy wird nicht zu zwei Klicks
 
 ES_CONTINUOUS = 0x80000000
 ES_DISPLAY_REQUIRED = 0x00000002
@@ -83,6 +87,29 @@ def _foreground_monitor(sct) -> dict:
     return sct.monitors[1]
 
 
+@dataclass(frozen=True)
+class FrameGeometry:
+    """Wo das zuletzt gesendete Bild auf dem Laptop liegt: fuer Klicks aus dem Live-Bild."""
+
+    left: int  # Monitor-Ursprung in Bildschirmpixeln
+    top: int
+    scale: float  # Bildpixel je Bildschirmpixel
+    off_x: int  # Lage des Monitorbildes im 16:9-Rahmen (schwarze Raender)
+    off_y: int
+    width: int  # Groesse des Monitorbildes im Rahmen
+    height: int
+
+
+def frame_to_screen(geo: FrameGeometry | None, fx: float, fy: float) -> tuple[int, int] | None:
+    """Tippstelle im Live-Bild (0..1) -> Bildschirmpixel; None auf den Raendern oder ohne Bild."""
+    if geo is None or not (0 <= fx <= 1 and 0 <= fy <= 1):
+        return None
+    px, py = fx * WIDTH - geo.off_x, fy * HEIGHT - geo.off_y
+    if not (0 <= px < geo.width and 0 <= py < geo.height):
+        return None
+    return geo.left + int(px / geo.scale), geo.top + int(py / geo.scale)
+
+
 def _keep_display_on(on: bool) -> None:
     """Waehrend des Streams kein Bildschirmschoner und kein abgeschaltetes Display."""
     try:
@@ -99,9 +126,11 @@ class _Grabber:
     def __init__(self):
         self._sct = None
         self._locked_frame: bytes | None = None
+        self.geometry: FrameGeometry | None = None  # zum zuletzt gesendeten Bild
 
     def grab(self) -> bytes:
         if _desktop_locked():
+            self.geometry = None  # auf den Platzhalter wird nicht geklickt
             return self._placeholder()
         if self._sct is None:
             import mss
@@ -111,11 +140,17 @@ class _Grabber:
             except (AttributeError, OSError):
                 pass
             self._sct = mss.MSS()
-        shot = self._sct.grab(_foreground_monitor(self._sct))
+        monitor = _foreground_monitor(self._sct)
+        shot = self._sct.grab(monitor)
         image = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
         image.thumbnail((WIDTH, HEIGHT), Image.Resampling.BILINEAR)
+        off_x, off_y = (WIDTH - image.width) // 2, (HEIGHT - image.height) // 2
         frame = Image.new("RGB", (WIDTH, HEIGHT))
-        frame.paste(image, ((WIDTH - image.width) // 2, (HEIGHT - image.height) // 2))
+        frame.paste(image, (off_x, off_y))
+        self.geometry = FrameGeometry(
+            monitor.get("left", 0), monitor.get("top", 0), image.width / shot.size[0],
+            off_x, off_y, image.width, image.height,
+        )
         return frame.tobytes()
 
     def _placeholder(self) -> bytes:
@@ -137,10 +172,39 @@ class ScreenStreamer(FrameProcessor):
         self._task: asyncio.Task | None = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bildschirm")
         self._grabber = _Grabber()
+        self._last_click = 0.0
 
     @property
     def active(self) -> bool:
         return self._task is not None
+
+    async def click(self, fx: object, fy: object, pc_client) -> dict:
+        """Tippen im Live-Bild = Linksklick am Laptop. Nur bei laufendem Stream; der Host prueft das
+        Ziel wie bei jedem Klick (gesperrte Fenster, Sperrbildschirm) und schreibt den Audit-Eintrag."""
+        now = asyncio.get_running_loop().time()
+        if self.active and now - self._last_click < CLICK_MIN_INTERVAL:
+            return {"status": "ignored"}
+        self._last_click = now
+        try:
+            point = frame_to_screen(self._grabber.geometry, float(fx), float(fy))
+        except (TypeError, ValueError):
+            point = None
+        if not self.active or pc_client is None:
+            result = {"status": "rejected", "summary": "Live-Bild ist aus"}
+        elif point is None:
+            result = {"status": "rejected", "summary": "Stelle liegt nicht auf dem Bildschirm"}
+        else:
+            raw = await pc_client._call_tool_text("maus_klicken", {"x": point[0], "y": point[1]})
+            logger.info("Fernklick bei {},{}: {}", point[0], point[1], raw[:120])
+            result = json.loads(raw)
+        status = {"success": "fertig", "locked": "abgelehnt", "rejected": "abgelehnt"}.get(
+            str(result.get("status")), "fehler"
+        )
+        await self.push_frame(RTVIServerMessageFrame(data={
+            "type": "aktivitaet", "id": f"fernklick-{uuid.uuid4().hex[:8]}", "name": "fernklick",
+            "detail": str(result.get("summary", ""))[:80], "status": status,
+        }))
+        return result
 
     async def set_active(self, on: bool, source: str) -> bool:
         """Stream an/aus; die Oberflaeche erfaehrt den Zustand immer per Nachricht."""
