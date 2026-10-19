@@ -336,6 +336,10 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         if msg.type == "bildschirm":
             await streamer.set_active(bool((msg.data or {}).get("an")), "Knopf")
             return
+        if msg.type == "bildschirm_klick":  # Tippen im Live-Bild am Handy
+            data = msg.data or {}
+            await streamer.click(data.get("x"), data.get("y"), pc_client)
+            return
         await dev.on_client_message(msg.type, msg.data or {})
 
     @assistant_agg.event_handler("on_assistant_turn_stopped")

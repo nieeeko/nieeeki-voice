@@ -15,6 +15,7 @@ const LABEL: Record<string, string> = {
   maus_scrollen: "scrollt",
   bildschirm_ansehen: "schaut auf den Bildschirm",
   bildschirm_teilen: "teilt den Bildschirm",
+  fernklick: "Klick vom Handy",
   auf_bildschirm_klicken: "klickt",
   powershell_lesen: "liest PC-Infos",
   websuche: "sucht im Web",

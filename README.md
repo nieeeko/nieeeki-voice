@@ -46,15 +46,16 @@ Lernen während des Gesprächs, PC-Host (Programme, Fenster, Tastatur, Bildschir
 Entwicklungsaufträge an Claude Code mit Freigabe-Karten, Desktop-App mit Stimmen-Rand und Autostart,
 Zusammenfassung langer Gespräche, Sprecherfarben im Rand (erster Sprecher = Nikolaj), Login mit
 zweitem Faktor, Online-Zugang über Tailscale, Live-Bildschirm des Laptops in der Oberfläche
-(Knopf „Bildschirm zeigen“ oder „Zeig mir den Bildschirm“), Meldung bei gesperrtem Laptop.
+(Knopf „Bildschirm zeigen“ oder „Zeig mir den Bildschirm“) mit Fernsteuerung (Schalter „Steuern“:
+Tippen im Live-Bild = Klick am Laptop, geprüft vom Host), Meldung bei gesperrtem Laptop,
+Entwicklungsaufträge mit Art planen/umsetzen/reviewen und passenden ECC-Werkzeugen.
 
-1. **Fernsteuerung aus dem Live-Bild:** am Handy auf das Bild tippen = Klick am Laptop (über den
-   Host mit denselben Prüfungen wie `maus_klicken`).
-2. **Stimmabdruck** (ECAPA) in `speakers`: Nikolaj sicher erkennen statt „wer zuerst spricht“;
+1. **Stimmabdruck** (ECAPA) in `speakers`: Nikolaj sicher erkennen statt „wer zuerst spricht“;
    nur seine Stimme darf Aufträge und PC-Aktionen auslösen.
-3. **Weckwort „nieeeki“** (openWakeWord mit eigenem Modell), damit kein Klick mehr nötig ist.
-4. **Eigene Stimme:** Aufnahme mit dem Vorlesetext → Soniox-Voice-Cloning, A/B-Test gegen Nina.
-5. **Sprach-Feinschliff, je eine Änderung pro Test:** Sprechtempo 1,1; „Ja“ während ihrer Frage.
+2. **Weckwort „nieeeki“** (openWakeWord mit eigenem Modell), damit kein Klick mehr nötig ist.
+3. **Eigene Stimme:** Aufnahme mit dem Vorlesetext → Soniox-Voice-Cloning, A/B-Test gegen Nina.
+4. **Sprach-Feinschliff, je eine Änderung pro Test:** Sprechtempo 1,1; „Ja“ während ihrer Frage.
+5. **Fernsteuerung erweitern:** Text vom Handy tippen, Scrollen im Live-Bild.
 6. **Schleier 2.0:** bei Vollbild-Spielen und -Videos ausblenden, Lichtrahmen ums Zielfenster.
 7. **Freigaben auch für PC-Aktionen** (`powershell_lesen` → needs_approval) in den Freigabe-Karten.
 8. **Online ohne Tailscale-App** (Daily-Transport, Phase 2) und Voice-Core in der Cloud (Phase 3).

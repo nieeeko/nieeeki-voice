@@ -71,5 +71,60 @@ class StreamerPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(streamer.active)
 
 
+def _geo_links():
+    """2560x1440-Monitor links vom Hauptmonitor, auf 1280x720 verkleinert, ohne Rand."""
+    return s.FrameGeometry(left=-2560, top=0, scale=0.5, off_x=0, off_y=0, width=1280, height=720)
+
+
+def _laufender_streamer(antwort='{"status": "success", "summary": "Klick in Chrome"}'):
+    streamer = s.ScreenStreamer()
+    streamer._task = object()  # Stream laeuft
+    streamer._grabber.geometry = _geo_links()
+    streamer.push_frame = mock.AsyncMock()
+    host = SimpleNamespace(_call_tool_text=mock.AsyncMock(return_value=antwort))
+    return streamer, host
+
+
+class FernklickTests(unittest.IsolatedAsyncioTestCase):
+    def test_umrechnung(self):
+        self.assertEqual(s.frame_to_screen(_geo_links(), 0.5, 0.5), (-1280, 720))
+        hoch = s.FrameGeometry(0, 0, 720 / 1920, 437, 0, 405, 720)  # Hochformat mittig mit Rand
+        self.assertEqual(s.frame_to_screen(hoch, 0.5, 0.5), (541, 960))
+        self.assertIsNone(s.frame_to_screen(hoch, 0.05, 0.5))  # schwarzer Rand
+        self.assertIsNone(s.frame_to_screen(None, 0.5, 0.5))  # noch kein Bild / gesperrt
+        self.assertIsNone(s.frame_to_screen(_geo_links(), 1.5, 0.5))
+
+    async def test_tippen_klickt_ueber_den_host(self):
+        streamer, host = _laufender_streamer()
+        result = await streamer.click(0.25, 0.5, host)
+        host._call_tool_text.assert_awaited_once_with("maus_klicken", {"x": -1920, "y": 720})
+        self.assertEqual(result["status"], "success")
+        meldung = streamer.push_frame.await_args.args[0].data
+        self.assertEqual((meldung["type"], meldung["name"], meldung["status"]), ("aktivitaet", "fernklick", "fertig"))
+        # Doppeltippen direkt danach wird kein zweiter Klick
+        self.assertEqual((await streamer.click(0.25, 0.5, host))["status"], "ignored")
+        host._call_tool_text.assert_awaited_once()
+
+    async def test_host_lehnt_ab(self):
+        streamer, host = _laufender_streamer('{"status": "locked", "summary": "Der Laptop ist gesperrt."}')
+        await streamer.click(0.5, 0.5, host)
+        self.assertEqual(streamer.push_frame.await_args.args[0].data["status"], "abgelehnt")
+
+    async def test_ohne_stream_kein_klick(self):
+        streamer, host = _laufender_streamer()
+        streamer._task = None
+        result = await streamer.click(0.5, 0.5, host)
+        host._call_tool_text.assert_not_awaited()
+        self.assertEqual(result["status"], "rejected")
+
+    async def test_unsinnige_stellen_klicken_nicht(self):
+        for fx, fy in [("x", 0.5), (None, 0.5), (float("nan"), 0.5), (2, 0.5), (0.5, -1)]:
+            with self.subTest(fx=fx, fy=fy):
+                streamer, host = _laufender_streamer()
+                result = await streamer.click(fx, fy, host)
+                host._call_tool_text.assert_not_awaited()
+                self.assertEqual(result["status"], "rejected")
+
+
 if __name__ == "__main__":
     unittest.main()
