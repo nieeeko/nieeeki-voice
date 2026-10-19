@@ -18,12 +18,16 @@ const level = { user: 0, bot: 0 };
 const target = { user: 0, bot: 0 };
 let speaker = 0;
 let cut = 0;
+let wake = 0; // Weckwort gehoert: kurz in nieekis Indigo aufleuchten, bis ihr "Ja?" kommt
 
 window.overlay.onLevels((s) => {
   target.user = s.user;
   target.bot = s.bot;
   speaker = s.speaker || 0;
   if (s.cut) cut = 1;
+});
+window.overlay.onWake(() => {
+  wake = 1;
 });
 
 const VERT = `
@@ -143,7 +147,9 @@ if (!gl) {
       level[k] += (t - level[k]) * (t > level[k] ? 0.3 : 0.06);
     }
     cut *= 0.93;
-    const speaking = Math.max(level.user, level.bot) > 0.03 || cut > 0.02;
+    wake *= 0.96; // nach ~1,5 s verklungen
+    const bot = Math.max(level.bot, wake);
+    const speaking = Math.max(level.user, bot) > 0.03 || cut > 0.02;
     const interval = 1000 / (speaking ? 30 : 12);
     if (now - last < interval) return;
     last = now;
@@ -154,7 +160,7 @@ if (!gl) {
     gl.uniform1f(u.uTime, t);
     gl.uniform1f(u.uVeil, VEIL_DIP * scale);
     gl.uniform1f(u.uUser, level.user);
-    gl.uniform1f(u.uBot, level.bot);
+    gl.uniform1f(u.uBot, bot);
     gl.uniform1f(u.uCut, cut);
     gl.uniform1f(u.uBreath, breath);
     gl.uniform3fv(u.uUserCol, rgb(SPEAKER_RGB[speaker % SPEAKER_RGB.length]));

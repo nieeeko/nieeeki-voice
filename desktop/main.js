@@ -351,6 +351,8 @@ function onWakeLine(line) {
   if (msg?.fehler) console.log(`Weckwort: ${msg.fehler}`);
   if (!msg?.weckwort || conversationActive || !mainWin || mainWin.isDestroyed()) return;
   mainWin.webContents.send("wake", { score: Number(msg.score) || 0 });
+  // Sofort sichtbar: der Schleier leuchtet auf, bevor die Verbindung steht und "Ja?" kommt
+  for (const w of overlays) if (!w.isDestroyed() && w.isVisible()) w.webContents.send("wake");
 }
 
 // Die Oberflaeche meldet, ob gerade ein Gespraech laeuft: dann pausiert der Lauscher
