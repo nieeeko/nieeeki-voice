@@ -5,7 +5,8 @@ eine Oberfläche mit Stimmlinie und Canvas sowie Werkzeuge für den Windows-PC.
 
 | Ordner | Was | Läuft auf |
 | --- | --- | --- |
-| `ui/` | Next.js 16: Stimmlinie (du oben, nieeeki unten, roter Strich = Unterbrechung), Canvas-Platzhalter | Vercel (später Desktop-App mit Tauri) |
+| `ui/` | Next.js 16: Stimmlinie (du oben, nieeeki unten, roter Strich = Unterbrechung), Canvas, Live-Bildschirm | Vercel, als App auf dem iPhone-Home-Bildschirm |
+| `desktop/` | Electron: Hauptfenster, Stimmen-Rand über allen Monitoren, Tray, Autostart, Windows-Installer | Windows-PC |
 | `voice-core/` | Pipecat 1.12: Soniox STT → Claude Haiku 5.5 → Soniox TTS, Unterbrechungen, Gedächtnis | zuerst lokal, später Runpod |
 | `host/` | nieeeki-Host: MCP-Werkzeugserver (mcp < 2) mit Risikoklassen und Audit-Log | Windows-PC |
 | `supabase/` | Migration `0001` mit `__SCHEMA__`-Platzhalter | Supabase |
@@ -57,14 +58,35 @@ Entwicklungsaufträge mit Art planen/umsetzen/reviewen und passenden ECC-Werkzeu
 3. **Eigene Stimme:** Aufnahme mit dem Vorlesetext → Soniox-Voice-Cloning, A/B-Test gegen Nina.
 4. **Sprach-Feinschliff, je eine Änderung pro Test:** Sprechtempo 1,1; „Ja“ während ihrer Frage.
 5. **Online ohne Tailscale-App** (Daily-Transport, Phase 2) und Voice-Core in der Cloud (Phase 3).
-6. **Kalender und Mail** (zurückgestellt), **Desktop-App packen** (Installer, Startmenü).
+6. **Kalender und Mail** (zurückgestellt).
 
 Seit dem 19.10. zusätzlich erledigt: Freigabe-Karten für PC-Aktionen (Klick führt aus, doppelt
 gesichert), Rechtsklick per langem Drücken und Lupe im Live-Bild, Schleier blendet sich bei
 Vollbild-Spielen, -Videos und Präsentationen aus, Lichtrahmen ums Zielfenster und Welle am
-Klickpunkt, wenn nieeeki (oder die Fernsteuerung) am PC handelt.
+Klickpunkt, wenn nieeeki (oder die Fernsteuerung) am PC handelt, Desktop-App als Installer,
+nieeeki als App auf dem iPhone (ohne App Store).
 
-Start: `scripts\nieeeki-desktop.cmd` (startet Voice-Core und Oberfläche selbst).
+## Desktop-App (Windows-Installer)
+
+- Bauen: `cd desktop` → `npm run dist` → `desktop\dist\nieeeki-Setup-<version>.exe`.
+- Installieren: Setup doppelklicken. Kein Admin nötig (nur für den eigenen Benutzer, nach
+  `%LOCALAPPDATA%\Programs\nieeeki`), Startmenü- und Desktop-Verknüpfung, startet danach von selbst.
+  Unsigniert: Windows SmartScreen fragt einmal nach („Weitere Informationen“ → „Trotzdem ausführen“).
+- Die App startet Voice-Core und Oberfläche aus dem Projektordner. Sie sucht ihn über `NIEEEKI_REPO`, die
+  gemerkte Wahl und dann `~\Projekte\nieeeki-voice`; ist er dort nicht, fragt sie einmal nach dem Ordner.
+- Logs und PIDs liegen weiter in `desktop\logs`. Entwicklungs- und installierte App teilen sich Daten und
+  Anmeldung, laufen aber nie gleichzeitig (die zweite holt nur das Fenster der ersten nach vorn).
+- War „Mit Windows starten“ bei der Entwicklungs-App an, übernimmt die installierte App den Autostart.
+- Ohne Installer: `scripts\nieeeki-desktop.cmd` (startet Voice-Core und Oberfläche selbst).
+
+## nieeeki auf dem iPhone (ohne App Store)
+
+1. Tailscale-App an, in **Safari** `https://nieeeki.nieeeko.com` öffnen.
+2. Teilen-Knopf → **„Zum Home-Bildschirm“** → Hinzufügen. Danach startet nieeeki vom Home-Bildschirm wie
+   eine App (Vollbild, eigenes Symbol).
+3. Einmal in der App anmelden (eigener Speicher, getrennt von Safari), Mikrofon erlauben.
+
+Grenzen: iOS pausiert die App im Hintergrund; das Gespräch läuft nur, solange sie vorn ist.
 
 ## Anmeldung und Online-Zugang
 
