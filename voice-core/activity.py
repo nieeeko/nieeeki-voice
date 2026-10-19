@@ -19,6 +19,7 @@ DETAIL_KEYS = {
     "fenster_fokussieren": "fenster", "tasten_druecken": "kombination", "websuche": "anfrage",
     "canvas_zeigen": "titel", "auf_bildschirm_klicken": "ziel", "bildschirm_ansehen": "frage",
     "merken": "art", "entwicklung_vorbereiten": "projekt", "maus_scrollen": "richtung",
+    "als_admin": "aktion",
 }
 
 
@@ -39,12 +40,34 @@ def _parse(result) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def highlight_fields(result) -> dict:
+    """Fensterrechteck und Klickpunkt aus dem Host-Ergebnis: Lichtrahmen im Schleier der Desktop-App."""
+    data = _parse(result) or {}
+    out = {}
+    for key, size in (("rahmen", 4), ("punkt", 2)):
+        value = data.get(key)
+        if isinstance(value, list) and len(value) == size and all(type(v) is int for v in value):
+            out[key] = value
+    return out
+
+
 def approval_card(name: str, args: dict, result) -> dict | None:
     """PC-Aktion, die Nikolaj freigeben muss (Host: status=needs_approval) -> Karte in der UI."""
     data = _parse(result)
     if not data or data.get("status") != "needs_approval" or not data.get("approval_id"):
         return None
     args = args if isinstance(args, dict) else {}
+    if name == "als_admin":
+        # Admin: genau das zeigen, was der Helfer nach der Freigabe ausfuehrt
+        if args.get("aktion") == "klicken":
+            detail = f"Klick bei {args.get('x')},{args.get('y')} in {data.get('fenster') or 'unbekanntes Fenster'}"
+        else:
+            detail = str(args.get("befehl") or "")
+        return {
+            "type": "freigaben", "job": "pc", "projekt": "Laptop als Admin",
+            "items": [{"id": str(data["approval_id"]), "grund": str(args.get("grund") or "Admin-Aktion")[:120],
+                       "detail": detail[:300], "admin": True}],
+        }
     return {
         "type": "freigaben", "job": "pc", "projekt": "Laptop",
         "items": [{
@@ -84,6 +107,7 @@ class ActivityReporter(FrameProcessor):
                 "type": "aktivitaet", "id": frame.tool_call_id, "name": frame.function_name,
                 "detail": _detail(frame.function_name, frame.arguments),
                 "status": "fehler" if frame.error else _status(frame.result),
+                **({} if frame.error else highlight_fields(frame.result)),
             }))
             if card := approval_card(frame.function_name, frame.arguments, frame.result):
                 await self.push_frame(RTVIServerMessageFrame(data=card))

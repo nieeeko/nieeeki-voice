@@ -21,6 +21,7 @@ const LABEL: Record<string, string> = {
   ferntaste: "Taste vom Handy",
   auf_bildschirm_klicken: "klickt",
   powershell_lesen: "liest PC-Infos",
+  als_admin: "als Admin",
   websuche: "sucht im Web",
   canvas_zeigen: "legt aufs Canvas",
   merken: "merkt sich etwas",

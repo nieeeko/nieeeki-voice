@@ -7,6 +7,22 @@
     <style>
       html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
       canvas { display: block; width: 100vw; height: 100vh; }
+      /* Lichtrahmen ums Fenster, in dem nieeeki gerade handelt, und Welle am Klickpunkt */
+      .frame, .tap { position: fixed; pointer-events: none; box-sizing: border-box; }
+      .frame {
+        border-radius: 10px; border: 3px solid rgba(154, 134, 242, 0.95);
+        box-shadow: 0 0 26px 6px rgba(154, 134, 242, 0.55), inset 0 0 20px rgba(154, 134, 242, 0.3);
+        animation: frame 1.7s ease-out forwards;
+      }
+      .tap {
+        width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%;
+        border: 3px solid rgba(154, 134, 242, 0.95); animation: tap 0.9s ease-out forwards;
+      }
+      .nein { border-color: rgba(240, 122, 110, 0.95); box-shadow: 0 0 26px 6px rgba(240, 122, 110, 0.5); }
+      @keyframes frame { 0% { opacity: 0; transform: scale(1.015); } 15% { opacity: 1; transform: none; } 70% { opacity: 1; } 100% { opacity: 0; } }
+      @keyframes tap { from { transform: scale(0.3); opacity: 1; } to { transform: scale(1.6); opacity: 0; } }
+      @keyframes fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+      @media (prefers-reduced-motion: reduce) { .frame, .tap { animation-name: fade; } }
     </style>
   </head>
   <body>

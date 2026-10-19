@@ -11,7 +11,16 @@ export type Presence = "offline" | "connecting" | "idle" | "listening" | "thinki
 declare global {
   interface Window {
     /** Nur in der Desktop-App (desktop/preload.js) vorhanden. */
-    nieeekiDesktop?: { isDesktop: boolean; levels: (sample: LevelSample) => void };
+    nieeekiDesktop?: {
+      isDesktop: boolean;
+      levels: (sample: LevelSample) => void;
+      /** Lichtrahmen im Schleier: wo nieeeki gerade handelt (Bildschirmpixel vom Host) */
+      highlight?: (h: { rahmen?: number[]; punkt?: number[]; ok: boolean }) => void;
+      /** Weckwort-Treffer vom lokalen Lauscher; gibt eine Abmelde-Funktion zurueck */
+      onWake?: (callback: (hit: { score: number }) => void) => () => void;
+      /** Laeuft ein Gespraech? Dann pausiert der Lauscher und gibt das Mikrofon frei. */
+      conversation?: (active: boolean) => void;
+    };
   }
 }
 
@@ -40,8 +49,8 @@ function restoreAudio(audio: HTMLAudioElement | null, state: SoftStop) {
   if (audio) audio.volume = 1;
 }
 
-/** Aktion eines Entwicklungsauftrags, die Nikolaj per Klick freigeben muss. */
-export type Approval = { job: string; projekt: string; id: string; grund: string; detail: string };
+/** Aktion, die Nikolaj per Klick freigeben muss (Entwicklungsauftrag, PC, PC als Admin). */
+export type Approval = { job: string; projekt: string; id: string; grund: string; detail: string; admin?: boolean };
 
 /** Ein Werkzeugaufruf von nieeeki fuer die Aktivitaets-Zeitleiste (activity.py im Voice-Core). */
 export type Activity = {
@@ -49,6 +58,8 @@ export type Activity = {
   name: string;
   detail: string;
   status: "laeuft" | "fertig" | "abgelehnt" | "fehler" | "wartet";
+  rahmen?: number[]; // Fensterrechteck [links, oben, rechts, unten] in Bildschirmpixeln
+  punkt?: number[]; // Klickpunkt [x, y]
 };
 
 /** Ein Abtastwert der Stimmlinie: oben Nikolaj, unten nieeeki. */
@@ -58,7 +69,11 @@ export type LevelSample = { user: number; bot: number; cut: boolean; speaker: nu
 export type LevelHistory = { samples: LevelSample[]; seq: number };
 
 const VOICE_CORE_URL = process.env.NEXT_PUBLIC_VOICE_CORE_URL ?? "http://localhost:7860";
+// Der Voice-Core laesst diese Adresse, localhost und die Vercel-Vorschauen herein (bot.py, auth_gate.py)
+const HOME_URL = "https://nieeeki.nieeeko.com";
 const HISTORY = 240; // ~12 s bei 20 Hz
+// Per Weckwort begonnene Gespraeche enden nach so langer Stille von selbst; dann lauscht der PC wieder.
+const WAKE_IDLE_MS = 45_000;
 
 export function useNieeeki() {
   const clientRef = useRef<PipecatClient | null>(null);
@@ -84,8 +99,14 @@ export function useNieeeki() {
   const softStop = useRef<SoftStop>({ armedAt: null, fading: false });
   const restoreVolume = () => restoreAudio(audioRef.current, softStop.current);
 
+  // Weckwort-Gespraech: seit wann ruhig, und ob gerade etwas laeuft, das nicht abbrechen darf
+  const wakeSession = useRef(false);
+  const lastChange = useRef(0);
+  const busy = useRef(false);
+
   const setPresence = useCallback((p: Presence) => {
     presenceRef.current = p;
+    lastChange.current = performance.now();
     setPresenceState(p);
   }, []);
 
@@ -118,8 +139,9 @@ export function useNieeeki() {
     return () => clearInterval(id);
   }, []);
 
-  const connect = useCallback(async () => {
+  const start = useCallback(async (anlass: "klick" | "weckwort") => {
     setError(null);
+    wakeSession.current = anlass === "weckwort";
     setPresence("connecting");
     const client = new PipecatClient({
       transport: new SmallWebRTCTransport(),
@@ -176,7 +198,7 @@ export function useNieeeki() {
             item?: CanvasItem;
             job?: string;
             projekt?: string;
-            items?: { id: string; grund: string; detail: string }[];
+            items?: { id: string; grund: string; detail: string; admin?: boolean }[];
           };
           if (msg?.type === "leiser_stopp") softStop.current.armedAt = performance.now();
           if (msg?.type === "bildschirm") setScreenOn(Boolean((msg as { aktiv?: unknown }).aktiv));
@@ -199,6 +221,10 @@ export function useNieeeki() {
             if (a.id && a.name) {
               // gleiche id = Statuswechsel; neueste oben, hoechstens 6 Eintraege
               setActivities((list) => [a, ...list.filter((x) => x.id !== a.id)].slice(0, 6));
+              // Desktop-App: Lichtrahmen ums Zielfenster und Welle am Klickpunkt
+              if ((a.rahmen || a.punkt) && a.status !== "laeuft") {
+                window.nieeekiDesktop?.highlight?.({ rahmen: a.rahmen, punkt: a.punkt, ok: a.status === "fertig" });
+              }
             }
           }
           if (msg?.type === "freigaben" && msg.job && msg.items) {
@@ -230,16 +256,21 @@ export function useNieeeki() {
       await client.startBotAndConnect({
         endpoint: `${VOICE_CORE_URL}/start`,
         headers: new Headers(token ? { Authorization: `Bearer ${token}` } : {}),
+        // Immer gueltiges JSON (leerer Body gab einen ERROR im Log); per Weckwort begruesst sie nur kurz
+        requestData: anlass === "weckwort" ? { anlass } : {},
       });
     } catch (e) {
       setPresence("offline");
+      // Fremde Herkunft weist der Voice-Core per CORS ab; der Browser meldet das nur als Netzwerkfehler
       setError(
         (e as { status?: number }).status === 401
           ? "Der Voice-Core hat die Anmeldung abgelehnt. Bitte ab- und wieder anmelden."
-          : `Voice-Core unter ${VOICE_CORE_URL} nicht erreichbar. Läuft bot.py?`,
+          : `Voice-Core unter ${VOICE_CORE_URL} nicht erreichbar (läuft bot.py, ist die Adresse ${HOME_URL} oder eine Vorschau?).`,
       );
     }
   }, [setPresence]);
+
+  const connect = useCallback(() => start("klick"), [start]);
 
   const disconnect = useCallback(async () => {
     await clientRef.current?.disconnect();
@@ -251,6 +282,28 @@ export function useNieeeki() {
     setScreenTrack(null);
     setPresence("offline");
   }, [setPresence]);
+
+  // Desktop-App: "nieeeki" gesagt -> Gespraech starten (nur wenn keins laeuft)
+  useEffect(() => {
+    return window.nieeekiDesktop?.onWake?.(() => {
+      if (presenceRef.current === "offline") void start("weckwort");
+    });
+  }, [start]);
+
+  // Waehrend eines Gespraechs pausiert der Weckwort-Lauscher (das Mikrofon gehoert dem Gespraech)
+  useEffect(() => {
+    window.nieeekiDesktop?.conversation?.(presence !== "offline");
+  }, [presence]);
+
+  // Weckwort-Gespraech nach WAKE_IDLE_MS Stille beenden, aber nie mitten in einer Aktion, bei offener
+  // Freigabe, laufendem Entwicklungsauftrag oder Live-Bild
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (!wakeSession.current || busy.current || presenceRef.current !== "idle") return;
+      if (performance.now() - lastChange.current > WAKE_IDLE_MS) void disconnect();
+    }, 1000);
+    return () => clearInterval(id);
+  }, [disconnect]);
 
   // Bildschirm-Stream an/aus; den Zustand bestaetigt der Voice-Core per Nachricht "bildschirm".
   const toggleScreen = useCallback(() => {
@@ -272,12 +325,23 @@ export function useNieeeki() {
   }, []);
 
   // Freigabe geht nur ueber die eigene WebRTC-Verbindung zum Voice-Core, nie per Sprache.
-  const decide = useCallback((a: Approval, ja: boolean) => {
-    clientRef.current?.sendClientMessage("freigabe", { job: a.job, id: a.id, entscheidung: ja ? "ja" : "nein" });
+  // Admin-Freigaben tragen Nikolajs Login; der Admin-Helfer prueft es selbst. immer = Erlaubnisliste.
+  const decide = useCallback(async (a: Approval, ja: boolean, immer = false) => {
     setApprovals((list) => list.filter((x) => !(x.job === a.job && x.id === a.id)));
+    const admin = a.admin && ja ? { token: (await accessToken()) ?? "", immer } : {};
+    clientRef.current?.sendClientMessage("freigabe", {
+      job: a.job, id: a.id, entscheidung: ja ? "ja" : "nein", ...admin,
+    });
   }, []);
 
   const acting = activities.some((a) => a.status === "laeuft");
+  const devRunning = canvasItems.some((it) => it.kind === "dokument" && it.laeuft === true);
+  const hasApprovals = approvals.length > 0;
+
+  useEffect(() => {
+    busy.current = acting || devRunning || hasApprovals || screenOn;
+    lastChange.current = performance.now(); // Stille zaehlt erst ab hier
+  }, [acting, devRunning, hasApprovals, screenOn]);
 
   return {
     presence,

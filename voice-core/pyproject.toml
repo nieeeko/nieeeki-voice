@@ -11,4 +11,6 @@ dependencies = [
     "tzdata>=2026.5",
     "pyjwt[crypto]>=2.10",
     "mss>=10",
+    "livekit-wakeword>=0.3,<0.4",
+    "sounddevice>=0.5",
 ]

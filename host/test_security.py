@@ -85,6 +85,38 @@ class PowershellTests(unittest.TestCase):
         self.assertIn("freigabe_entscheiden", names)
 
 
+class HighlightTests(unittest.TestCase):
+    def tearDown(self):
+        host._recent_actions.clear()
+
+    def test_klick_liefert_rahmen_und_punkt(self):
+        chrome = {"hwnd": 2, "titel": "Amazon - Chrome", "programm": "chrome.exe"}
+        with mock.patch.object(host.wc, "is_locked", return_value=False), \
+             mock.patch.object(host.wc, "screen_bounds", return_value=(0, 0, 2560, 1440)), \
+             mock.patch.object(host.wc, "window_at", return_value=chrome), \
+             mock.patch.object(host.wc, "window_rect", return_value=[100, 50, 1900, 1000]), \
+             mock.patch.object(host.wc, "click"):
+            result = host.maus_klicken(400, 300)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["rahmen"], [100, 50, 1900, 1000])
+        self.assertEqual(result["punkt"], [400, 300])
+
+    def test_ohne_fensterrechteck_kein_rahmen(self):
+        notepad = {"hwnd": 3, "titel": "Unbenannt - Editor", "programm": "notepad.exe"}
+        with mock.patch.object(host.wc, "is_locked", return_value=False), \
+             mock.patch.object(host.wc, "foreground", return_value=notepad), \
+             mock.patch.object(host.wc, "window_rect", return_value=None), \
+             mock.patch.object(host.wc, "type_text"):
+            result = host.tastatur_tippen("hallo rahmen")
+        self.assertEqual(result["status"], "success")
+        self.assertNotIn("rahmen", result)
+        self.assertNotIn("punkt", result)
+
+    def test_echtes_vordergrundfenster(self):
+        rect = host.wc.window_rect(host.wc.foreground()["hwnd"])
+        self.assertTrue(rect is None or (len(rect) == 4 and rect[2] > rect[0] and rect[3] > rect[1]))
+
+
 class ApprovalTests(unittest.TestCase):
     def setUp(self):
         host.PENDING.clear()
@@ -129,9 +161,75 @@ class ApprovalTests(unittest.TestCase):
         self.assertIn(aid, host.PENDING)  # die Anfrage bleibt offen
 
     def test_unbekannte_freigabe(self):
-        with mock.patch.object(host, "_powershell") as run:
+        with mock.patch.object(host, "_powershell") as run, \
+                mock.patch.object(host, "_admin_call", return_value={"status": "error", "summary": "unbekannt"}):
             self.assertEqual(host.freigabe_entscheiden("deadbeef", True, "geheimer-test-schluessel")["status"], "error")
         run.assert_not_called()
+
+
+class AdminTests(unittest.TestCase):
+    """als_admin entscheidet nichts selbst: es reicht nur an den Admin-Helfer weiter."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        host.PENDING.clear()
+        self.audit = Path(tempfile.mkdtemp()) / "audit.jsonl"
+        self.patches = [mock.patch.object(host, "APPROVAL_KEY", "geheimer-test-schluessel"),
+                        mock.patch.object(host, "AUDIT_LOG", self.audit)]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+
+    def test_gesperrtes_geht_gar_nicht_erst_raus(self):
+        with mock.patch.object(host, "_admin_call") as call:
+            r = host.als_admin("powershell", "test", befehl="bcdedit /set testsigning on")
+        self.assertEqual(r["status"], "blocked")
+        call.assert_not_called()
+
+    def test_vorschlag_geht_an_den_helfer(self):
+        reply = {"status": "needs_approval", "admin": True, "approval_id": "a1b2c3d4"}
+        with mock.patch.object(host, "_admin_call", return_value=reply) as call:
+            r = host.als_admin("powershell", "Drucker", befehl="Restart-Service Spooler")
+        self.assertEqual(r, reply)
+        call.assert_called_once_with({"op": "vorschlagen", "aktion": "powershell", "grund": "Drucker",
+                                      "befehl": "Restart-Service Spooler"})
+
+    def test_unbekannte_aktion_und_kaputte_koordinaten(self):
+        with mock.patch.object(host, "_admin_call") as call, mock.patch.object(host, "_locked", return_value=None):
+            self.assertEqual(host.als_admin("cmd", "x", befehl="dir")["status"], "rejected")
+            self.assertEqual(host.als_admin("klicken", "x", x="10", y=5)["status"], "rejected")
+        call.assert_not_called()
+
+    def test_klick_nicht_bei_gesperrtem_laptop(self):
+        with mock.patch.object(host, "_admin_call") as call, \
+                mock.patch.object(host, "_locked", return_value={"status": "locked"}):
+            self.assertEqual(host.als_admin("klicken", "Turbo", x=10, y=20)["status"], "locked")
+        call.assert_not_called()
+
+    def test_admin_freigabe_mit_token_an_den_helfer_aber_nie_ins_log(self):
+        with mock.patch.object(host, "_admin_call", return_value={"status": "success"}) as call:
+            r = host.freigabe_entscheiden("a1b2c3d4", True, "geheimer-test-schluessel", token="TOKEN-SENTINEL", immer=True)
+        self.assertEqual(r["status"], "success")
+        call.assert_called_once_with({"op": "entscheiden", "approval_id": "a1b2c3d4", "ja": True,
+                                      "token": "TOKEN-SENTINEL", "immer": True})
+        self.assertNotIn("TOKEN-SENTINEL", self.audit.read_text(encoding="utf-8"))
+
+    def test_ohne_schluessel_auch_keine_admin_freigabe(self):
+        with mock.patch.object(host, "_admin_call") as call:
+            r = host.freigabe_entscheiden("a1b2c3d4", True, "falsch", token="TOKEN-SENTINEL")
+        self.assertEqual(r["status"], "blocked")
+        call.assert_not_called()
+
+    def test_ohne_einrichtung_klare_meldung(self):
+        with mock.patch.object(host, "ADMIN_DIR", host.Path("C:/gibt/es/nicht")):
+            r = host._admin_call({"op": "liste"})
+        self.assertEqual(r["status"], "error")
+        self.assertIn("admin-einrichten", r["summary"])
 
 
 class KeyboardAndWindowTests(unittest.TestCase):

@@ -62,9 +62,9 @@ from pipecat.transports.base_transport import TransportParams
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from memory import MemoryStore
-from persona import build_system_prompt
+from persona import build_system_prompt, greeting_for
 from activity import ActivityReporter
-from auth_gate import install_owner_gate
+from auth_gate import allow_preview_origins, install_owner_gate
 from audio_monitor import AudioInputMonitor, SpeakerTracker
 from learning import learn_from_session
 from dev_agent import DevAgent
@@ -116,6 +116,7 @@ SUMMARY_PROMPT = (
     "Nichts erfinden, keine Wertungen."
 )  # so viele fruehere Zeilen als Kontext mitgeben
 NIEEEKI_GREETING = os.getenv("NIEEEKI_GREETING", "Hi Nikolaj, ich bin da.")
+NIEEEKI_WAKE_GREETING = os.getenv("NIEEEKI_WAKE_GREETING", "Ja?")  # per Weckwort gestartet
 # Haelt Claude Nikolajs Satz fuer unvollstaendig, wartet sie so lange auf den Rest (Sekunden).
 SMART_TURN_STOP_SECS = float(os.getenv("SMART_TURN_STOP_SECS") or 1.0)
 TURN_INCOMPLETE_SHORT_SECS = float(os.getenv("TURN_INCOMPLETE_SHORT_SECS") or 1.5)
@@ -353,7 +354,8 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         # Freigabe-Karte fuer eine PC-Aktion (z. B. PowerShell); Entwicklungsauftraege gehen an dev
         if msg.type == "freigabe" and data.get("job") == "pc":
             ja = data.get("entscheidung") == "ja"
-            result = await decide_pc_approval(pc_client, data.get("id"), ja)
+            # token: Nikolajs Login fuer Admin-Freigaben (prueft der Admin-Helfer), immer: Erlaubnisliste
+            result = await decide_pc_approval(pc_client, data.get("id"), ja, data.get("token"), data.get("immer") is True)
             await report_pc_approval(task, ja, result)
             return
         await dev.on_client_message(msg.type, msg.data or {})
@@ -407,8 +409,9 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     async def on_client_connected(_transport, _client):
         # Kurze Begruessung waermt die Sprachausgabe auf: der erste Soniox-Satz einer
         # Verbindung brauchte einmal 10 s. Leer setzen, um sie abzuschalten.
-        if NIEEEKI_GREETING:
-            await task.queue_frames([TTSSpeakFrame(NIEEEKI_GREETING)])
+        greeting = greeting_for(runner_args.body, NIEEEKI_GREETING, NIEEEKI_WAKE_GREETING)
+        if greeting:
+            await task.queue_frames([TTSSpeakFrame(greeting)])
         # Sitzung erst nach der Begruessung anlegen (Supabase-Insert kostete ~0,6 s vor dem ersten Ton)
         await memory.start_session(channel=os.getenv("NIEEEKI_CHANNEL", "web"))
 
@@ -432,6 +435,7 @@ async def bot(runner_args: RunnerArguments):
 
 
 if __name__ == "__main__":
+    import pipecat.runner.run as runner
     from pipecat.runner.run import app, main
 
     # Nur die eigene Oberflaeche darf Sitzungen starten. Ohne Liste erlaubt der Runner jede
@@ -441,6 +445,8 @@ if __name__ == "__main__":
         os.environ["PIPECAT_ALLOWED_ORIGINS"] = (
             "http://localhost:3000,http://127.0.0.1:3000,https://nieeeki.nieeeko.com"
         )
+    # Dazu die Vercel-Vorschauen des Projekts (nur mit Vercel-Anmeldung erreichbar, auth_gate.py).
+    allow_preview_origins(runner)
     # Und auch von dort nur Nikolaj: Supabase-Login mit zweitem Faktor (auth_gate.py).
     install_owner_gate(app)
     main()

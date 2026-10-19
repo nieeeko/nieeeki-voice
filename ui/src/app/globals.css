@@ -36,6 +36,9 @@ body {
   font-family: var(--font-body), system-ui, sans-serif;
   font-size: 17px;
   line-height: 1.5;
+  /* iPhone als Home-Bildschirm-App: nichts unter Notch, Statusleiste und Home-Leiste (sonst 0) */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  --safe-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
 }
 
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
@@ -43,7 +46,7 @@ body {
 .shell {
   display: grid;
   grid-template-columns: minmax(320px, 440px) 1fr;
-  min-height: 100dvh;
+  min-height: var(--safe-height);
 }
 
 /* ---------- Praesenz ---------- */
@@ -152,6 +155,15 @@ body {
 }
 .approve { border: 0; background: var(--cut); color: var(--bg); }
 .reject { border: 1px solid var(--rule); background: transparent; color: var(--ink); }
+.approval-actions { flex-wrap: wrap; }
+.always { border: 1px dashed var(--cut); background: transparent; color: var(--cut); }
+/* Admin-Freigabe: deutlich anders als normale Karten, damit man nicht aus Gewohnheit freigibt */
+.approval[data-admin] { border-style: double; border-width: 4px; }
+.approval-what .approval-admin {
+  display: inline-block; margin-right: 8px; padding: 1px 8px; border-radius: 999px;
+  background: var(--cut); color: var(--bg); font: 700 12px var(--font-body), sans-serif;
+  letter-spacing: 0.04em; text-transform: uppercase; vertical-align: 2px;
+}
 
 .canvas-board { width: 100%; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .canvas-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -312,7 +324,7 @@ body {
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
 /* Anmeldung: Glaskarte vor der atmenden Aurora */
-.gate { position: relative; isolation: isolate; min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px; }
+.gate { position: relative; isolation: isolate; min-height: var(--safe-height); display: grid; place-items: center; padding: 24px 16px; }
 .gate-card {
   width: min(100%, 400px); display: flex; flex-direction: column; gap: 18px; padding: 36px 32px;
   border-radius: 24px;

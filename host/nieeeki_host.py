@@ -9,6 +9,9 @@ untrusted: auch Text aus Websuche, Mails oder Dateien kann im Modell als Anweisu
   read      sofort                (system_info, powershell_lesen mit reinen Get-/Test-Befehlen)
   change    sofort, protokolliert (webseite_oeffnen, programm_oeffnen, dark_mode)
   critical  nur Freigabe-Anfrage; ausgefuehrt erst nach Bestaetigung durch Nikolaj in der UI
+  admin     als_admin: nur ueber den Admin-Helfer (voice-core/admin_helper.py, laeuft erhoeht). Der
+            fuehrt nur aus, was auf Nikolajs Erlaubnisliste steht oder was er per Klick freigibt;
+            die Freigabe prueft der Helfer selbst (Nikolajs Login mit zweitem Faktor)
   blocked   nie
 Freigaben kann das Modell NICHT selbst erteilen: es gibt dafuer kein MCP-Werkzeug.
 Jeder Aufruf landet im Audit-Log (JSONL).
@@ -23,6 +26,7 @@ import os
 import platform
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -291,6 +295,15 @@ def fenster_auflisten() -> dict:
     return {"status": "success", "fenster": windows[:40], "vorne": wc.foreground()["titel"]}
 
 
+def _highlight(result: dict, hwnd: int | None, point: tuple[int, int] | None = None) -> dict:
+    """Fensterrechteck und Klickpunkt mitgeben: die Desktop-App zeigt dort einen Lichtrahmen."""
+    if hwnd and (rect := wc.window_rect(hwnd)):
+        result["rahmen"] = rect
+    if point:
+        result["punkt"] = [int(point[0]), int(point[1])]
+    return result
+
+
 def _locked(tool: str) -> dict | None:
     """Ist der Laptop gesperrt, laeuft jede Eingabe ins Leere: klar melden statt so zu tun als ob.
     Wichtig beim Fernzugriff vom Handy, wo Nikolaj den Bildschirm nicht sieht."""
@@ -313,7 +326,7 @@ def fenster_fokussieren(fenster: str) -> dict:
         return {"status": "rejected", "summary": str(e)}
     _audit({"tool": "fenster_fokussieren", "titel": w["titel"], "programm": w["programm"], "risk": "change"})
     wc.focus(w["hwnd"])
-    return {"status": "success", "summary": f"{w['titel']} ist vorne"}
+    return _highlight({"status": "success", "summary": f"{w['titel']} ist vorne"}, w["hwnd"])
 
 
 def _prepare_input(fenster: str | None) -> dict:
@@ -344,7 +357,8 @@ def tastatur_tippen(text: str, fenster: str = "") -> dict:
     _audit({"tool": "tastatur_tippen", "ziel": target["titel"][:120], "programm": target["programm"],
             "zeichen": len(text), "risk": "change"})
     wc.type_text(text)
-    return {"status": "success", "summary": f"{len(text)} Zeichen in {target['titel'][:60]} getippt"}
+    return _highlight({"status": "success", "summary": f"{len(text)} Zeichen in {target['titel'][:60]} getippt"},
+                      target["hwnd"])
 
 
 @mcp.tool()
@@ -363,7 +377,8 @@ def tasten_druecken(kombination: str, fenster: str = "") -> dict:
         return dup
     _audit({"tool": "tasten_druecken", "kombination": kombination, "ziel": target["titel"][:120], "risk": "change"})
     wc.press(codes)
-    return {"status": "success", "summary": f"{kombination} in {target['titel'][:60]} gedrueckt"}
+    return _highlight({"status": "success", "summary": f"{kombination} in {target['titel'][:60]} gedrueckt"},
+                      target["hwnd"])
 
 
 @mcp.tool()
@@ -453,7 +468,8 @@ def maus_klicken(x: int, y: int, taste: str = "links", doppelt: bool = False) ->
     _audit({"tool": "maus_klicken", "x": x, "y": y, "taste": taste, "doppelt": bool(doppelt),
             "ziel": target["titel"][:120], "programm": target["programm"], "risk": "change"})
     wc.click(x, y, taste, bool(doppelt))
-    return {"status": "success", "summary": f"Klick bei {x},{y} in {target['titel'][:60]}"}
+    return _highlight({"status": "success", "summary": f"Klick bei {x},{y} in {target['titel'][:60]}"},
+                      target["hwnd"], (x, y))
 
 
 @mcp.tool()
@@ -476,19 +492,87 @@ def maus_scrollen(richtung: str = "runter", schritte: int = 5, x: int | None = N
         return {"status": "rejected", "summary": str(e)}
     _audit({"tool": "maus_scrollen", "richtung": richtung, "schritte": steps, "ziel": target["titel"][:120], "risk": "change"})
     wc.scroll(x, y, steps if richtung == "hoch" else -steps)
-    return {"status": "success", "summary": f"{steps} Schritte {richtung} in {target['titel'][:60]}"}
+    return _highlight({"status": "success", "summary": f"{steps} Schritte {richtung} in {target['titel'][:60]}"},
+                      target["hwnd"], (x, y))
+
+
+# ---------- Admin: nur ueber den Admin-Helfer ----------
+ADMIN_DIR = Path(os.getenv("NIEEEKI_ADMIN_DIR") or Path(os.getenv("ProgramData", r"C:\ProgramData")) / "nieeeki" / "admin")
+ADMIN_PORT = int(os.getenv("NIEEEKI_ADMIN_PORT", "8766"))
+ADMIN_TIMEOUT_SECS = 75  # PowerShell im Helfer hat 60 s
+MAX_ADMIN_REPLY = 64 * 1024
+
+
+def _admin_call(payload: dict) -> dict:
+    """Eine Anfrage an den Admin-Helfer. Der Host gibt hier nichts frei: Erlaubnisliste und Nikolajs
+    Token prueft der Helfer selbst."""
+    try:
+        key = (ADMIN_DIR / "client.key").read_text(encoding="ascii").strip()
+    except OSError:
+        return {"status": "error", "summary": "Der Admin-Zugriff ist noch nicht eingerichtet: einmal "
+                "scripts\\admin-einrichten.ps1 am Laptop ausfuehren."}
+    try:
+        with socket.create_connection(("127.0.0.1", ADMIN_PORT), timeout=ADMIN_TIMEOUT_SECS) as s:
+            s.sendall((json.dumps({**payload, "schluessel": key}, ensure_ascii=False) + "\n").encode())
+            data = b""
+            while not data.endswith(b"\n") and len(data) < MAX_ADMIN_REPLY:
+                chunk = s.recv(8192)
+                if not chunk:
+                    break
+                data += chunk
+        reply = json.loads(data)
+    except (OSError, ValueError):
+        return {"status": "error", "summary": "Der Admin-Helfer antwortet nicht (Aufgabe nieeeki-admin "
+                "startet bei der Anmeldung)."}
+    return reply if isinstance(reply, dict) else {"status": "error", "summary": "Unerwartete Antwort"}
 
 
 @mcp.tool()
-def freigabe_entscheiden(approval_id: str, ja: bool, schluessel: str = "") -> dict:
+def als_admin(aktion: str, grund: str, befehl: str = "", x: int = -1, y: int = -1) -> dict:
+    """Etwas mit Administratorrechten tun (admin). aktion "powershell": `befehl` (eine Zeile) als Admin
+    ausfuehren. aktion "klicken": Klick bei x/y in ein Admin-Fenster, z. B. das GIGABYTE Control
+    Center (Koordinaten aus bildschirm_ansehen). `grund` = wofuer; steht auf der Freigabe-Karte.
+    Steht die Aktion nicht auf Nikolajs Erlaubnisliste, passiert nichts, bis er sie in der
+    Oberflaeche freigibt (status=needs_approval)."""
+    if aktion not in ("powershell", "klicken"):
+        return {"status": "rejected", "summary": "aktion: powershell oder klicken"}
+    req: dict = {"op": "vorschlagen", "aktion": aktion, "grund": str(grund)[:200]}
+    if aktion == "powershell":
+        if isinstance(befehl, str) and any(re.search(p, befehl, re.IGNORECASE) for p in BLOCKED_PATTERNS):
+            _audit({"tool": "als_admin", "aktion": aktion, "befehl": befehl[:MAX_COMMAND_LEN], "risk": "blocked"})
+            return {"status": "blocked", "summary": "Das ist auch als Admin gesperrt."}
+        req["befehl"] = befehl
+    else:
+        if locked := _locked("als_admin"):
+            return locked
+        if type(x) is not int or type(y) is not int:
+            return {"status": "rejected", "summary": "x und y muessen ganze Zahlen sein"}
+        req.update(x=x, y=y)
+    result = _admin_call(req)
+    _audit({"tool": "als_admin", **{k: str(v)[:MAX_COMMAND_LEN] for k, v in req.items() if k != "op"},
+            "risk": "admin", "status": result.get("status")})
+    return result
+
+
+@mcp.tool()
+def freigabe_entscheiden(approval_id: str, ja: bool, schluessel: str = "", token: str = "",
+                         immer: bool = False) -> dict:
     """Nur fuer den Voice-Core, nach Nikolajs Klick auf eine Freigabe-Karte in der Oberflaeche.
     Doppelt gesichert: steht nicht in pc_host.LLM_TOOLS (das Gespraechsmodell sieht es nicht) und
-    braucht den Schluessel, den der Voice-Core beim Start des Hosts erzeugt (NIEEEKI_APPROVAL_KEY)."""
+    braucht den Schluessel, den der Voice-Core beim Start des Hosts erzeugt (NIEEEKI_APPROVAL_KEY).
+    Admin-Freigaben gehen mit Nikolajs Token (`token`, wird nie protokolliert) an den Admin-Helfer;
+    `immer` nimmt die Aktion dort in die Erlaubnisliste auf."""
     approval_id = str(approval_id)
     if not APPROVAL_KEY or not hmac.compare_digest(str(schluessel), APPROVAL_KEY):
         _audit({"tool": "freigabe_entscheiden", "approval_id": approval_id, "risk": "blocked",
                 "error": "ohne gueltigen Schluessel"})
         return {"status": "blocked", "summary": "Freigaben kommen nur aus der Oberflaeche."}
+    if approval_id not in PENDING:
+        result = _admin_call({"op": "entscheiden", "approval_id": approval_id, "ja": bool(ja),
+                              "token": str(token), "immer": bool(immer)})
+        _audit({"tool": "freigabe_entscheiden", "approval_id": approval_id, "risk": "admin", "ja": bool(ja),
+                "immer": bool(immer), "status": result.get("status")})
+        return result
     if not bool(ja):
         action = PENDING.pop(approval_id, None)
         _audit({"tool": "freigabe_entscheiden", "approval_id": approval_id, "risk": "rejected", **(action or {})})

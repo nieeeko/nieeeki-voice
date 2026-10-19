@@ -5,7 +5,8 @@ eine Oberfläche mit Stimmlinie und Canvas sowie Werkzeuge für den Windows-PC.
 
 | Ordner | Was | Läuft auf |
 | --- | --- | --- |
-| `ui/` | Next.js 16: Stimmlinie (du oben, nieeeki unten, roter Strich = Unterbrechung), Canvas-Platzhalter | Vercel (später Desktop-App mit Tauri) |
+| `ui/` | Next.js 16: Stimmlinie (du oben, nieeeki unten, roter Strich = Unterbrechung), Canvas, Live-Bildschirm | Vercel, als App auf dem iPhone-Home-Bildschirm |
+| `desktop/` | Electron: Hauptfenster, Stimmen-Rand über allen Monitoren, Tray, Autostart, Windows-Installer | Windows-PC |
 | `voice-core/` | Pipecat 1.12: Soniox STT → Claude Haiku 5.5 → Soniox TTS, Unterbrechungen, Gedächtnis | zuerst lokal, später Runpod |
 | `host/` | nieeeki-Host: MCP-Werkzeugserver (mcp < 2) mit Risikoklassen und Audit-Log | Windows-PC |
 | `supabase/` | Migration `0001` mit `__SCHEMA__`-Platzhalter | Supabase |
@@ -56,22 +57,80 @@ Entwicklungsaufträge mit Art planen/umsetzen/reviewen und passenden ECC-Werkzeu
 2. **Weckwort „nieeeki“** (openWakeWord mit eigenem Modell), damit kein Klick mehr nötig ist.
 3. **Eigene Stimme:** Aufnahme mit dem Vorlesetext → Soniox-Voice-Cloning, A/B-Test gegen Nina.
 4. **Sprach-Feinschliff, je eine Änderung pro Test:** Sprechtempo 1,1; „Ja“ während ihrer Frage.
-5. **Lichtrahmen ums Zielfenster** im Schleier, wenn nieeeki am PC handelt, plus Welle am Klickpunkt.
-6. **Online ohne Tailscale-App** (Daily-Transport, Phase 2) und Voice-Core in der Cloud (Phase 3).
-7. **Kalender und Mail** (zurückgestellt), **Desktop-App packen** (Installer, Startmenü).
+5. **Online ohne Tailscale-App** (Daily-Transport, Phase 2) und Voice-Core in der Cloud (Phase 3).
+6. **Kalender und Mail** (zurückgestellt).
 
 Seit dem 19.10. zusätzlich erledigt: Freigabe-Karten für PC-Aktionen (Klick führt aus, doppelt
 gesichert), Rechtsklick per langem Drücken und Lupe im Live-Bild, Schleier blendet sich bei
-Vollbild-Spielen, -Videos und Präsentationen aus.
+Vollbild-Spielen, -Videos und Präsentationen aus, Lichtrahmen ums Zielfenster und Welle am
+Klickpunkt, wenn nieeeki (oder die Fernsteuerung) am PC handelt, Desktop-App als Installer,
+nieeeki als App auf dem iPhone (ohne App Store).
 
-Start: `scripts\nieeeki-desktop.cmd` (startet Voice-Core und Oberfläche selbst).
+## Desktop-App (Windows-Installer)
+
+- Bauen: `cd desktop` → `npm run dist` → `desktop\dist\nieeeki-Setup-<version>.exe`.
+- Installieren: Setup doppelklicken. Kein Admin nötig (nur für den eigenen Benutzer, nach
+  `%LOCALAPPDATA%\Programs\nieeeki`), Startmenü- und Desktop-Verknüpfung, startet danach von selbst.
+  Unsigniert: Windows SmartScreen fragt einmal nach („Weitere Informationen“ → „Trotzdem ausführen“).
+- Die App startet Voice-Core und Oberfläche aus dem Projektordner. Sie sucht ihn über `NIEEEKI_REPO`, die
+  gemerkte Wahl und dann `~\Projekte\nieeeki-voice`; ist er dort nicht, fragt sie einmal nach dem Ordner.
+- Logs und PIDs liegen weiter in `desktop\logs`. Entwicklungs- und installierte App teilen sich Daten und
+  Anmeldung, laufen aber nie gleichzeitig (die zweite holt nur das Fenster der ersten nach vorn).
+- War „Mit Windows starten“ bei der Entwicklungs-App an, übernimmt die installierte App den Autostart.
+- Ohne Installer: `scripts\nieeeki-desktop.cmd` (startet Voice-Core und Oberfläche selbst).
+
+## nieeeki auf dem iPhone (ohne App Store)
+
+1. Tailscale-App an, in **Safari** `https://nieeeki.nieeeko.com` öffnen.
+2. Teilen-Knopf → **„Zum Home-Bildschirm“** → Hinzufügen. Danach startet nieeeki vom Home-Bildschirm wie
+   eine App (Vollbild, eigenes Symbol).
+3. Einmal in der App anmelden (eigener Speicher, getrennt von Safari), Mikrofon erlauben.
+
+Grenzen: iOS pausiert die App im Hintergrund; das Gespräch läuft nur, solange sie vorn ist.
+
+## Weckwort „nieeeki“ (Desktop-App)
+
+- „nieeeki“ sagen → sie antwortet „Ja?“ → Auftrag sagen. Nach 45 s Stille legt sie von selbst auf und
+  lauscht wieder, aber nie mitten in einer Aktion, bei offener Freigabe, laufendem Entwicklungsauftrag
+  oder Live-Bild. Per Klick begonnene Gespräche bleiben offen wie bisher.
+- Der Lauscher (`voice-core/wake.py`) läuft lokal: kein Ton verlässt den PC, nichts wird gespeichert,
+  etwa 3 % eines CPU-Kerns. Während eines Gesprächs pausiert er und gibt das Mikrofon frei.
+- Tray: Schalter „Weckwort "nieeeki"“. Schwelle in `voice-core/.env` (`NIEEEKI_WAKE_THRESHOLD`).
+- Das Modell `voice-core/models/nieeeki.onnx` ist selbst trainiert (synthetische Stimmen), siehe
+  [wakeword/README.md](wakeword/README.md).
+
+## Admin-Zugriff (mit Freigabe)
+
+nieeeki kann Dinge mit Administratorrechten erledigen, etwa Dienste, Treiber, Systemeinstellungen
+oder Klicks in Admin-Fenster wie das GIGABYTE Control Center. Jede Aktion braucht deine Freigabe,
+außer sie steht auf deiner Erlaubnisliste.
+
+- **Einrichten (einmal, am Laptop):** `scripts\admin-einrichten.cmd` doppelklicken und die Windows-Abfrage
+  bestätigen. Das legt `C:\ProgramData\nieeeki\admin` an (schreiben dürfen nur Administratoren) und richtet
+  die Aufgabe `\nieeeki\nieeeki-admin` ein, die den Helfer bei deiner Anmeldung mit Adminrechten startet.
+  Nach Änderungen an `voice-core/admin_helper.py` oder `auth_gate.py` erneut ausführen. Entfernen:
+  `scripts\admin-entfernen.ps1`.
+- **Ablauf:** nieeeki schlägt vor (`als_admin`: PowerShell-Befehl oder Klick) → Karte „Admin“ in der
+  Oberfläche mit genau dem Befehl bzw. Klickpunkt und Fenster → *Freigeben*, *Ablehnen* oder *Immer erlauben*.
+  Der Helfer prüft bei jeder Freigabe selbst dein Login mit zweitem Faktor; Text vom Modell reicht nie.
+- **Erlaubnisliste:** `C:\ProgramData\nieeeki\admin\erlaubt.json`, z. B.
+  `{"regeln": [{"aktion": "klicken", "fenster": "GIGABYTE CONTROL CENTER"}, {"aktion": "powershell", "befehl": "Restart-Service Spooler"}]}`.
+  PowerShell-Regeln gelten nur für genau diesen Befehl, Klick-Regeln für ein Fenster. „Immer erlauben“
+  trägt die Aktion ein; von Hand ändern nur als Administrator.
+- **Immer gesperrt**, auch mit Freigabe: Virenschutz aus, Bootkonfiguration, Konten und Gruppen, Passwörter,
+  Datenträger löschen, der Helfer selbst (Ordner, Erlaubnisliste, Aufgabe).
+- **Protokoll:** `C:\ProgramData\nieeeki\admin\admin-audit.jsonl` (jede Anfrage, nie dein Token).
+- **Grenze:** Das schützt gegen falsche Modell-Entscheidungen, untergeschobene Anweisungen aus Webseiten oder
+  Dateien und fremde Geräte. Gegen Schadsoftware, die schon unter deinem Windows-Konto läuft, hilft es nur
+  begrenzt (sie könnte Login und Schlüssel aus deinem Profil lesen).
 
 ## Anmeldung und Online-Zugang
 
 - Die Oberfläche (lokal, Desktop-App und `https://nieeeki.nieeeko.com`) beginnt mit einer Anmeldung:
   E-Mail und Passwort, danach der Code aus der Authenticator-App. Beim ersten Mal QR-Code scannen.
 - Der Voice-Core prüft jedes Token selbst (`voice-core/auth_gate.py`): nur `NIEEEKI_OWNER_ID` mit
-  zweitem Faktor (aal2), sonst 401. WebSockets sind gesperrt, erlaubte Herkünfte siehe `.env.example`.
+  zweitem Faktor (aal2), sonst 401. WebSockets sind gesperrt, erlaubte Herkünfte siehe `.env.example`:
+  Produktion, localhost und die Vercel-Vorschauen des Projekts (die sind nur mit Vercel-Anmeldung erreichbar).
 - Online über Tailscale (Phase 1, kostenlos für private Nutzung, keine offenen Ports am Router):
   1. Tailscale auf Laptop und Handy, beide mit demselben Konto anmelden.
   2. Auf dem Laptop: `tailscale serve --bg 7860` (Funnel bleibt aus: nur im eigenen Tailnet erreichbar).

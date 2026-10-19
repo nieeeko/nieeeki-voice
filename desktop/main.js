@@ -10,7 +10,7 @@
 // Sicherheit: contextIsolation + sandbox, die Seite bekommt nur die Funktion "Pegel melden".
 // Mikrofon nur fuer die eigene Oberflaeche; fremde Seiten oeffnen im normalen Browser.
 
-const { app, BrowserWindow, Menu, Tray, ipcMain, nativeImage, powerSaveBlocker, screen, session, shell } =
+const { app, BrowserWindow, Menu, Tray, dialog, ipcMain, nativeImage, powerSaveBlocker, screen, session, shell } =
   require("electron");
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -20,8 +20,9 @@ const path = require("node:path");
 
 const UI_URL = process.env.NIEEEKI_UI_URL || "http://localhost:3000";
 const VOICE_CORE_URL = process.env.NIEEEKI_VOICE_CORE_URL || "http://localhost:7860";
-const REPO = path.resolve(__dirname, "..");
 const UI_ORIGIN = new URL(UI_URL).origin;
+const CONFIG_FILE = path.join(app.getPath("userData"), "config.json");
+let REPO = null; // Projektordner mit voice-core/ und ui/, siehe resolveRepo()
 
 // Chromium-Drosselung fuer verdeckte/Hintergrund-Fenster aus (die Ursache der Abbrueche)
 app.commandLine.appendSwitch("disable-renderer-backgrounding");
@@ -40,7 +41,59 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 }
 
+// ---------- Projektordner ----------
+// Entwicklung: der Ordner ueber desktop/. Installiert: NIEEEKI_REPO, sonst die gemerkte Wahl, sonst
+// ~/Projekte/nieeeki-voice, sonst einmal nachfragen. Gueltig ist nur ein Ordner mit voice-core/bot.py.
+function isRepo(dir) {
+  return Boolean(dir) && fs.existsSync(path.join(dir, "voice-core", "bot.py"));
+}
+
+function readConfig() {
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeConfig(patch) {
+  fs.mkdirSync(path.dirname(CONFIG_FILE), { recursive: true });
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify({ ...readConfig(), ...patch }, null, 2));
+}
+
+function resolveRepo() {
+  const candidates = app.isPackaged
+    ? [process.env.NIEEEKI_REPO, readConfig().repo, path.join(os.homedir(), "Projekte", "nieeeki-voice")]
+    : [process.env.NIEEEKI_REPO, path.resolve(__dirname, "..")];
+  const found = candidates.find(isRepo);
+  if (found || !app.isPackaged) return found || null;
+  const picked = dialog.showOpenDialogSync({
+    title: "nieeeki: Projektordner nieeeki-voice waehlen",
+    properties: ["openDirectory"],
+  })?.[0];
+  if (!isRepo(picked)) {
+    dialog.showErrorBox(
+      "nieeeki",
+      "Im gewaehlten Ordner fehlt voice-core/bot.py. nieeeki startet Voice-Core und Oberflaeche darum nicht selbst.",
+    );
+    return null;
+  }
+  writeConfig({ repo: picked });
+  return picked;
+}
+
+// Logs und PIDs immer in desktop/logs des Projekts: Entwicklungs- und installierte App sehen dieselben
+// Dienste (Neustart aus dem Tray trifft auch einen Voice-Core, den die andere Variante gestartet hat).
+function logDir() {
+  return REPO ? path.join(REPO, "desktop", "logs") : path.join(app.getPath("userData"), "logs");
+}
+
 // ---------- Dienste (Voice-Core, UI) ----------
+function uvCommand() {
+  const uv = path.join(os.homedir(), ".local", "bin", "uv.exe");
+  return fs.existsSync(uv) ? uv : "uv";
+}
+
 function isUp(url) {
   return new Promise((resolve) => {
     const req = http.get(url, (res) => {
@@ -56,9 +109,9 @@ function isUp(url) {
 }
 
 function startService(name, command, args, cwd) {
-  const logDir = path.join(__dirname, "logs");
-  fs.mkdirSync(logDir, { recursive: true });
-  const log = fs.openSync(path.join(logDir, `${name}.log`), "a");
+  const dir = logDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const log = fs.openSync(path.join(dir, `${name}.log`), "a");
   // argv-Liste ohne Shell
   const child = spawn(command, args, {
     cwd,
@@ -69,7 +122,7 @@ function startService(name, command, args, cwd) {
   child.on("exit", (code) => console.log(`${name} beendet (${code})`));
   children.push(child);
   // PID merken: so kann ein naechster Start einen verwaisten Dienst sicher beenden
-  fs.writeFileSync(path.join(logDir, `${name}.pid`), String(child.pid));
+  fs.writeFileSync(path.join(dir, `${name}.pid`), String(child.pid));
 }
 
 // Ganzen Prozessbaum beenden: "uv run" startet Python als Kindprozess; nur uv zu beenden liess den
@@ -80,7 +133,7 @@ function killTree(pid) {
 }
 
 function killStale(name) {
-  const pidFile = path.join(__dirname, "logs", `${name}.pid`);
+  const pidFile = path.join(logDir(), `${name}.pid`);
   if (!fs.existsSync(pidFile)) return;
   killTree(Number(fs.readFileSync(pidFile, "utf8")));
   fs.rmSync(pidFile, { force: true });
@@ -88,17 +141,16 @@ function killStale(name) {
 
 function stopServices() {
   for (const c of children.splice(0)) killTree(c.pid);
-  for (const name of ["voice-core", "ui"]) fs.rmSync(path.join(__dirname, "logs", `${name}.pid`), { force: true });
+  for (const name of ["voice-core", "ui"]) fs.rmSync(path.join(logDir(), `${name}.pid`), { force: true });
 }
 
 async function ensureServices() {
-  if (process.env.NIEEEKI_MANAGE_SERVICES === "off") return;
+  if (process.env.NIEEEKI_MANAGE_SERVICES === "off" || !REPO) return;
   // Reste eines frueheren Laufs dieser App beenden, damit immer der aktuelle Code laeuft
   killStale("voice-core");
   await new Promise((r) => setTimeout(r, 800));
   if (!(await isUp(VOICE_CORE_URL))) {
-    const uv = path.join(os.homedir(), ".local", "bin", "uv.exe");
-    startService("voice-core", fs.existsSync(uv) ? uv : "uv", ["run", "bot.py"], path.join(REPO, "voice-core"));
+    startService("voice-core", uvCommand(), ["run", "bot.py"], path.join(REPO, "voice-core"));
   }
   if (!(await isUp(UI_URL))) {
     const nextBin = path.join(REPO, "ui", "node_modules", "next", "dist", "bin", "next");
@@ -174,6 +226,7 @@ function createOverlays() {
         backgroundThrottling: false,
       },
     });
+    win.nieeekiBounds = display.bounds; // fuer den Lichtrahmen: welcher Ausschnitt gehoert hierher
     win.setIgnoreMouseEvents(true); // Klicks gehen durch auf darunterliegende Programme
     win.setAlwaysOnTop(true, "screen-saver");
     win.setVisibleOnAllWorkspaces(true);
@@ -230,9 +283,105 @@ function updateOverlayVisibility() {
   overlays.forEach((w) => !w.isDestroyed() && (show ? w.showInactive() : w.hide()));
 }
 
+// ---------- Weckwort "nieeeki" ----------
+// voice-core/wake.py lauscht lokal am Mikrofon, kein Ton verlaesst den PC. Ein Treffer geht an die
+// Oberflaeche, die dann das Gespraech aufbaut; solange es laeuft, pausiert der Lauscher (Mikrofon frei).
+let wakeProc = null;
+let wakeRestart = null;
+let conversationActive = false;
+
+function wakeModelPath() {
+  return process.env.NIEEEKI_WAKE_MODEL || (REPO ? path.join(REPO, "voice-core", "models", "nieeeki.onnx") : null);
+}
+
+function wakeAvailable() {
+  const model = wakeModelPath();
+  return Boolean(REPO && model && fs.existsSync(model));
+}
+
+function wakeEnabled() {
+  return readConfig().weckwort !== false; // Standard an; der Tray-Schalter merkt sich "aus"
+}
+
+function startWake() {
+  clearTimeout(wakeRestart);
+  if (wakeProc || quitting || !wakeAvailable() || !wakeEnabled()) return;
+  const dir = logDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const log = fs.openSync(path.join(dir, "wake.log"), "a");
+  const proc = spawn(uvCommand(), ["run", "wake.py"], {
+    cwd: path.join(REPO, "voice-core"),
+    windowsHide: true,
+    stdio: ["pipe", "pipe", log],
+    env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
+  });
+  fs.closeSync(log); // der Kindprozess hat seine eigene Kopie
+  wakeProc = proc;
+  proc.stdin.on("error", () => {}); // Lauscher schon weg: Schreiben ins Leere ist egal
+  if (conversationActive) proc.stdin.write("pause\n");
+  let buffer = "";
+  proc.stdout.on("data", (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop();
+    for (const line of lines) onWakeLine(line);
+  });
+  proc.on("exit", (code) => {
+    if (wakeProc !== proc) return; // absichtlich beendet oder schon ersetzt
+    wakeProc = null;
+    // 2 = kein Modell: nicht neu starten. Sonst nach 5 s wieder (z. B. Mikrofon kurz weg)
+    if (!quitting && code !== 2) wakeRestart = setTimeout(startWake, 5000);
+  });
+}
+
+function stopWake() {
+  clearTimeout(wakeRestart);
+  const proc = wakeProc;
+  wakeProc = null;
+  if (proc) killTree(proc.pid); // "uv run" startet Python als Kindprozess
+}
+
+function onWakeLine(line) {
+  let msg;
+  try {
+    msg = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (msg?.fehler) console.log(`Weckwort: ${msg.fehler}`);
+  if (!msg?.weckwort || conversationActive || !mainWin || mainWin.isDestroyed()) return;
+  mainWin.webContents.send("wake", { score: Number(msg.score) || 0 });
+  // Sofort sichtbar: der Schleier leuchtet auf, bevor die Verbindung steht und "Ja?" kommt
+  for (const w of overlays) if (!w.isDestroyed() && w.isVisible()) w.webContents.send("wake");
+}
+
+// Die Oberflaeche meldet, ob gerade ein Gespraech laeuft: dann pausiert der Lauscher
+ipcMain.on("conversation", (event, active) => {
+  if (!mainWin || event.sender !== mainWin.webContents) return; // nur das Hauptfenster darf senden
+  conversationActive = Boolean(active);
+  wakeProc?.stdin.write(conversationActive ? "pause\n" : "weiter\n");
+});
+
 // Nicht gepackte App: Windows muss electron.exe MIT dem App-Ordner starten
 function loginItem() {
   return app.isPackaged ? {} : { path: process.execPath, args: [__dirname] };
+}
+
+// Umstieg auf die installierte App: einen Autostart der Entwicklungs-App (electron.exe + desktop/)
+// uebernimmt sie, sonst starten beim Anmelden beide (doppelter Schleier, doppelte Dienste).
+function adoptDevAutostart() {
+  // Probestart aus desktop/dist im Projekt: Autostart nicht auf den Build-Ordner umbiegen
+  if (!app.isPackaged || !REPO || process.execPath.toLowerCase().startsWith(REPO.toLowerCase())) return;
+  const dev = {
+    path: path.join(REPO, "desktop", "node_modules", "electron", "dist", "electron.exe"),
+    args: [path.join(REPO, "desktop")],
+  };
+  const items = (app.getLoginItemSettings(dev).launchItems || []).filter(
+    (item) => item.path.toLowerCase() === dev.path.toLowerCase(),
+  );
+  if (!items.length) return;
+  for (const item of items) app.setLoginItemSettings({ ...dev, name: item.name, openAtLogin: false });
+  app.setLoginItemSettings({ openAtLogin: true });
 }
 
 function raisePriority() {
@@ -245,8 +394,9 @@ function raisePriority() {
   }
 }
 
+// Installiert liegt das Symbol neben app.asar (extraResources), sonst neben main.js
 function iconPath() {
-  return path.join(REPO, "ui", "src", "app", "favicon.ico");
+  return app.isPackaged ? path.join(process.resourcesPath, "icon.ico") : path.join(__dirname, "icon.ico");
 }
 
 function createTray() {
@@ -262,6 +412,17 @@ function createTray() {
         click: (item) => {
           borderOn = item.checked;
           updateOverlayVisibility();
+        },
+      },
+      {
+        label: wakeAvailable() ? 'Weckwort "nieeeki"' : "Weckwort (Modell fehlt)",
+        type: "checkbox",
+        enabled: wakeAvailable(),
+        checked: wakeAvailable() && wakeEnabled(),
+        click: (item) => {
+          writeConfig({ weckwort: item.checked });
+          if (item.checked) startWake();
+          else stopWake();
         },
       },
       {
@@ -297,6 +458,33 @@ ipcMain.on("levels", (event, sample) => {
   for (const w of overlays) if (!w.isDestroyed()) w.webContents.send("levels", s);
 });
 
+// ---------- Lichtrahmen: wo nieeeki gerade handelt ----------
+// Kommt von der Oberflaeche (Host-Ergebnis: Fensterrechteck und Klickpunkt in Bildschirmpixeln).
+// Electron rechnet in geraeteunabhaengige Pixel um; jedes Rand-Fenster bekommt nur seinen Ausschnitt.
+ipcMain.on("highlight", (event, data) => {
+  if (!mainWin || event.sender !== mainWin.webContents) return; // nur das Hauptfenster darf senden
+  const ints = (v, n) => (Array.isArray(v) && v.length === n && v.every(Number.isInteger) ? v : null);
+  const rect = ints(data?.rahmen, 4);
+  const point = ints(data?.punkt, 2);
+  if (!rect && !point) return;
+  const dip = (x, y) => screen.screenToDipPoint({ x, y });
+  const corners = rect && [dip(rect[0], rect[1]), dip(rect[2], rect[3])];
+  const tap = point && dip(point[0], point[1]);
+  for (const w of overlays) {
+    if (w.isDestroyed() || !w.isVisible()) continue;
+    const b = w.nieeekiBounds;
+    const frame = corners && {
+      x: corners[0].x - b.x, y: corners[0].y - b.y, w: corners[1].x - corners[0].x, h: corners[1].y - corners[0].y,
+    };
+    const dot = tap && { x: tap.x - b.x, y: tap.y - b.y };
+    const showFrame = frame && frame.x < b.width && frame.y < b.height && frame.x + frame.w > 0 && frame.y + frame.h > 0;
+    const showDot = dot && dot.x >= 0 && dot.y >= 0 && dot.x < b.width && dot.y < b.height;
+    if (showFrame || showDot) {
+      w.webContents.send("highlight", { ok: Boolean(data?.ok), rahmen: showFrame ? frame : null, punkt: showDot ? dot : null });
+    }
+  }
+});
+
 function clamp(v) {
   return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0;
 }
@@ -312,11 +500,14 @@ app.whenReady().then(async () => {
   powerSaveBlocker.start("prevent-app-suspension");
   // Audio bekommt Vorrang, wenn Chrome & Co. beim Oeffnen kurz die CPU belegen (Aussetzer)
   setInterval(raisePriority, 5000);
+  REPO = resolveRepo();
+  adoptDevAutostart();
   createTray();
   await ensureServices();
   createMainWindow();
   createOverlays();
   watchFullscreen();
+  startWake();
   screen.on("display-added", createOverlays);
   screen.on("display-removed", createOverlays);
   screen.on("display-metrics-changed", createOverlays);
@@ -325,6 +516,7 @@ app.whenReady().then(async () => {
 app.on("before-quit", () => {
   quitting = true;
   fullscreenWatcher?.kill();
+  stopWake();
   stopServices();
 });
 
