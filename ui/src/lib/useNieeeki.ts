@@ -66,6 +66,8 @@ export function useNieeeki() {
   const levels = useRef<LevelSample>({ user: 0, bot: 0, cut: false, speaker: 0 });
   const presenceRef = useRef<Presence>("offline");
   const history = useRef<LevelHistory>({ samples: [], seq: 0 });
+  // nieekis Pegel messen wir selbst: SmallWebRTC meldet onRemoteAudioLevel nie (kein Player).
+  const botMeter = useRef<{ ctx: AudioContext; analyser: AnalyserNode; buf: Float32Array<ArrayBuffer> } | null>(null);
 
   const [presence, setPresenceState] = useState<Presence>("offline");
   const [userLine, setUserLine] = useState("");
@@ -89,6 +91,14 @@ export function useNieeeki() {
   // sonst rendert die ganze Seite (samt Canvas) 20-mal pro Sekunde neu.
   useEffect(() => {
     const id = setInterval(() => {
+      const meter = botMeter.current;
+      if (meter) {
+        meter.analyser.getFloatTimeDomainData(meter.buf);
+        let sum = 0;
+        for (const v of meter.buf) sum += v * v;
+        // RMS ungefaehr auf die Skala des Mikrofonpegels bringen (Sprache ~0,1-0,3)
+        levels.current.bot = Math.min(1, Math.sqrt(sum / meter.buf.length) * 2);
+      }
       const s = { ...levels.current };
       levels.current.cut = false;
       window.nieeekiDesktop?.levels(s); // Stimmen-Rand der Desktop-App (sonst nicht vorhanden)
@@ -138,8 +148,17 @@ export function useNieeeki() {
         onTrackStarted: (track, participant) => {
           if (participant?.local || track.kind !== "audio") return;
           if (!audioRef.current) audioRef.current = new Audio();
-          audioRef.current.srcObject = new MediaStream([track]);
+          const stream = new MediaStream([track]);
+          audioRef.current.srcObject = stream;
           void audioRef.current.play();
+          // Pegel fuer Kugel, Stimmlinie und den Schleier der Desktop-App
+          void botMeter.current?.ctx.close();
+          const ctx = new AudioContext();
+          const analyser = ctx.createAnalyser();
+          analyser.fftSize = 512;
+          ctx.createMediaStreamSource(stream).connect(analyser);
+          void ctx.resume();
+          botMeter.current = { ctx, analyser, buf: new Float32Array(analyser.fftSize) };
         },
         onServerMessage: (data) => {
           // canvas_zeigen im Voice-Core -> neues Element aufs Canvas
@@ -215,6 +234,9 @@ export function useNieeeki() {
   const disconnect = useCallback(async () => {
     await clientRef.current?.disconnect();
     clientRef.current = null;
+    void botMeter.current?.ctx.close();
+    botMeter.current = null;
+    levels.current.bot = 0;
     setPresence("offline");
   }, [setPresence]);
 

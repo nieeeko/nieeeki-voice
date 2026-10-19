@@ -1,5 +1,6 @@
 // Stimmen-Schleier: ein weicher, fliessender Saum entlang aller Bildschirmkanten, der nach innen
-// transparent auslaeuft (Breite ca. 5-8 cm, Standard 6,5 cm; NIEEEKI_VEIL_CM in der Desktop-App).
+// transparent auslaeuft (Standard 4,55 cm; NIEEEKI_VEIL_CM in der Desktop-App). Leuchtet bei jeder
+// Stimme: Nikolaj und weitere Sprecher ueber das Mikrofon, nieeeki ueber ihren gemessenen Pegel.
 //
 // WebGL-Fragment-Shader: jeder Bildpunkt kennt seinen Abstand zur naechsten Kante. Im Leerlauf
 // "atmet" der Schleier leise (6-s-Zyklus), beim Sprechen waechst und leuchtet er in der Farbe der
@@ -10,7 +11,7 @@
 const SPEAKER_RGB = [[79, 179, 199], [242, 170, 76], [110, 200, 120], [236, 112, 170], [230, 210, 90]];
 const BOT_RGB = [154, 134, 242];
 const RENDER_SCALE = 0.5;
-const VEIL_DIP = Number(new URLSearchParams(location.search).get("veil")) || 246;
+const VEIL_DIP = Number(new URLSearchParams(location.search).get("veil")) || 172;
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const level = { user: 0, bot: 0 };
