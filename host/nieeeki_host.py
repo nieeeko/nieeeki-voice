@@ -291,6 +291,15 @@ def fenster_auflisten() -> dict:
     return {"status": "success", "fenster": windows[:40], "vorne": wc.foreground()["titel"]}
 
 
+def _highlight(result: dict, hwnd: int | None, point: tuple[int, int] | None = None) -> dict:
+    """Fensterrechteck und Klickpunkt mitgeben: die Desktop-App zeigt dort einen Lichtrahmen."""
+    if hwnd and (rect := wc.window_rect(hwnd)):
+        result["rahmen"] = rect
+    if point:
+        result["punkt"] = [int(point[0]), int(point[1])]
+    return result
+
+
 def _locked(tool: str) -> dict | None:
     """Ist der Laptop gesperrt, laeuft jede Eingabe ins Leere: klar melden statt so zu tun als ob.
     Wichtig beim Fernzugriff vom Handy, wo Nikolaj den Bildschirm nicht sieht."""
@@ -313,7 +322,7 @@ def fenster_fokussieren(fenster: str) -> dict:
         return {"status": "rejected", "summary": str(e)}
     _audit({"tool": "fenster_fokussieren", "titel": w["titel"], "programm": w["programm"], "risk": "change"})
     wc.focus(w["hwnd"])
-    return {"status": "success", "summary": f"{w['titel']} ist vorne"}
+    return _highlight({"status": "success", "summary": f"{w['titel']} ist vorne"}, w["hwnd"])
 
 
 def _prepare_input(fenster: str | None) -> dict:
@@ -344,7 +353,8 @@ def tastatur_tippen(text: str, fenster: str = "") -> dict:
     _audit({"tool": "tastatur_tippen", "ziel": target["titel"][:120], "programm": target["programm"],
             "zeichen": len(text), "risk": "change"})
     wc.type_text(text)
-    return {"status": "success", "summary": f"{len(text)} Zeichen in {target['titel'][:60]} getippt"}
+    return _highlight({"status": "success", "summary": f"{len(text)} Zeichen in {target['titel'][:60]} getippt"},
+                      target["hwnd"])
 
 
 @mcp.tool()
@@ -363,7 +373,8 @@ def tasten_druecken(kombination: str, fenster: str = "") -> dict:
         return dup
     _audit({"tool": "tasten_druecken", "kombination": kombination, "ziel": target["titel"][:120], "risk": "change"})
     wc.press(codes)
-    return {"status": "success", "summary": f"{kombination} in {target['titel'][:60]} gedrueckt"}
+    return _highlight({"status": "success", "summary": f"{kombination} in {target['titel'][:60]} gedrueckt"},
+                      target["hwnd"])
 
 
 @mcp.tool()
@@ -453,7 +464,8 @@ def maus_klicken(x: int, y: int, taste: str = "links", doppelt: bool = False) ->
     _audit({"tool": "maus_klicken", "x": x, "y": y, "taste": taste, "doppelt": bool(doppelt),
             "ziel": target["titel"][:120], "programm": target["programm"], "risk": "change"})
     wc.click(x, y, taste, bool(doppelt))
-    return {"status": "success", "summary": f"Klick bei {x},{y} in {target['titel'][:60]}"}
+    return _highlight({"status": "success", "summary": f"Klick bei {x},{y} in {target['titel'][:60]}"},
+                      target["hwnd"], (x, y))
 
 
 @mcp.tool()
@@ -476,7 +488,8 @@ def maus_scrollen(richtung: str = "runter", schritte: int = 5, x: int | None = N
         return {"status": "rejected", "summary": str(e)}
     _audit({"tool": "maus_scrollen", "richtung": richtung, "schritte": steps, "ziel": target["titel"][:120], "risk": "change"})
     wc.scroll(x, y, steps if richtung == "hoch" else -steps)
-    return {"status": "success", "summary": f"{steps} Schritte {richtung} in {target['titel'][:60]}"}
+    return _highlight({"status": "success", "summary": f"{steps} Schritte {richtung} in {target['titel'][:60]}"},
+                      target["hwnd"], (x, y))
 
 
 @mcp.tool()

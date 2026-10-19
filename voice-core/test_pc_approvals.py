@@ -50,6 +50,20 @@ class EntscheidungTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await pc_host.decide_pc_approval(None, "a1b2c3d4", True))["status"], "error")
 
 
+class LichtrahmenTests(unittest.TestCase):
+    def test_rahmen_und_punkt_werden_weitergereicht(self):
+        result = json.dumps({"status": "success", "rahmen": [100, 50, 1900, 1000], "punkt": [400, 300]})
+        self.assertEqual(activity.highlight_fields(result), {"rahmen": [100, 50, 1900, 1000], "punkt": [400, 300]})
+
+    def test_nur_gueltige_formen(self):
+        for result in [
+            '{"rahmen": [1, 2, 3]}', '{"rahmen": "0,0,1,1"}', '{"punkt": [1.5, 2]}',
+            '{"punkt": [true, false]}', "kein json", None, '{"status": "success"}',
+        ]:
+            with self.subTest(result=result):
+                self.assertEqual(activity.highlight_fields(result), {})
+
+
 class KarteTests(unittest.TestCase):
     def test_needs_approval_wird_karte(self):
         result = json.dumps({"status": "needs_approval", "approval_id": "a1b2c3d4", "summary": "Bitte freigeben"})

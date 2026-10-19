@@ -4,4 +4,5 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("nieeekiDesktop", {
   isDesktop: true,
   levels: (sample) => ipcRenderer.send("levels", sample),
+  highlight: (data) => ipcRenderer.send("highlight", data), // Lichtrahmen: wo nieeeki gerade handelt
 });

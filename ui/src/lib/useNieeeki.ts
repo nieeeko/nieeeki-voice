@@ -11,7 +11,12 @@ export type Presence = "offline" | "connecting" | "idle" | "listening" | "thinki
 declare global {
   interface Window {
     /** Nur in der Desktop-App (desktop/preload.js) vorhanden. */
-    nieeekiDesktop?: { isDesktop: boolean; levels: (sample: LevelSample) => void };
+    nieeekiDesktop?: {
+      isDesktop: boolean;
+      levels: (sample: LevelSample) => void;
+      /** Lichtrahmen im Schleier: wo nieeeki gerade handelt (Bildschirmpixel vom Host) */
+      highlight?: (h: { rahmen?: number[]; punkt?: number[]; ok: boolean }) => void;
+    };
   }
 }
 
@@ -49,6 +54,8 @@ export type Activity = {
   name: string;
   detail: string;
   status: "laeuft" | "fertig" | "abgelehnt" | "fehler" | "wartet";
+  rahmen?: number[]; // Fensterrechteck [links, oben, rechts, unten] in Bildschirmpixeln
+  punkt?: number[]; // Klickpunkt [x, y]
 };
 
 /** Ein Abtastwert der Stimmlinie: oben Nikolaj, unten nieeeki. */
@@ -199,6 +206,10 @@ export function useNieeeki() {
             if (a.id && a.name) {
               // gleiche id = Statuswechsel; neueste oben, hoechstens 6 Eintraege
               setActivities((list) => [a, ...list.filter((x) => x.id !== a.id)].slice(0, 6));
+              // Desktop-App: Lichtrahmen ums Zielfenster und Welle am Klickpunkt
+              if ((a.rahmen || a.punkt) && a.status !== "laeuft") {
+                window.nieeekiDesktop?.highlight?.({ rahmen: a.rahmen, punkt: a.punkt, ok: a.status === "fertig" });
+              }
             }
           }
           if (msg?.type === "freigaben" && msg.job && msg.items) {
@@ -230,6 +241,7 @@ export function useNieeeki() {
       await client.startBotAndConnect({
         endpoint: `${VOICE_CORE_URL}/start`,
         headers: new Headers(token ? { Authorization: `Bearer ${token}` } : {}),
+        requestData: {}, // gueltiges JSON statt leerem Body (sonst ERROR im Voice-Core-Log)
       });
     } catch (e) {
       setPresence("offline");

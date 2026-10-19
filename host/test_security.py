@@ -85,6 +85,38 @@ class PowershellTests(unittest.TestCase):
         self.assertIn("freigabe_entscheiden", names)
 
 
+class HighlightTests(unittest.TestCase):
+    def tearDown(self):
+        host._recent_actions.clear()
+
+    def test_klick_liefert_rahmen_und_punkt(self):
+        chrome = {"hwnd": 2, "titel": "Amazon - Chrome", "programm": "chrome.exe"}
+        with mock.patch.object(host.wc, "is_locked", return_value=False), \
+             mock.patch.object(host.wc, "screen_bounds", return_value=(0, 0, 2560, 1440)), \
+             mock.patch.object(host.wc, "window_at", return_value=chrome), \
+             mock.patch.object(host.wc, "window_rect", return_value=[100, 50, 1900, 1000]), \
+             mock.patch.object(host.wc, "click"):
+            result = host.maus_klicken(400, 300)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["rahmen"], [100, 50, 1900, 1000])
+        self.assertEqual(result["punkt"], [400, 300])
+
+    def test_ohne_fensterrechteck_kein_rahmen(self):
+        notepad = {"hwnd": 3, "titel": "Unbenannt - Editor", "programm": "notepad.exe"}
+        with mock.patch.object(host.wc, "is_locked", return_value=False), \
+             mock.patch.object(host.wc, "foreground", return_value=notepad), \
+             mock.patch.object(host.wc, "window_rect", return_value=None), \
+             mock.patch.object(host.wc, "type_text"):
+            result = host.tastatur_tippen("hallo rahmen")
+        self.assertEqual(result["status"], "success")
+        self.assertNotIn("rahmen", result)
+        self.assertNotIn("punkt", result)
+
+    def test_echtes_vordergrundfenster(self):
+        rect = host.wc.window_rect(host.wc.foreground()["hwnd"])
+        self.assertTrue(rect is None or (len(rect) == 4 and rect[2] > rect[0] and rect[3] > rect[1]))
+
+
 class ApprovalTests(unittest.TestCase):
     def setUp(self):
         host.PENDING.clear()

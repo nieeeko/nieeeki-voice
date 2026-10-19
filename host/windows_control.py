@@ -284,6 +284,16 @@ def window_at(x: int, y: int) -> dict:
     return {"hwnd": root, "titel": _title(root), "programm": _exe_of(root)}
 
 
+def window_rect(hwnd: int) -> list[int] | None:
+    """Rechteck eines Fensters in Bildschirmpixeln (fuer den Lichtrahmen im Schleier der Desktop-App)."""
+    _dpi_aware()
+    try:
+        left, top, right, bottom = _win32()[0].GetWindowRect(hwnd)
+    except Exception:  # Fenster inzwischen zu: dann eben ohne Rahmen
+        return None
+    return [left, top, right, bottom] if right > left and bottom > top else None
+
+
 def screen_bounds() -> tuple[int, int, int, int]:
     import mss
     _dpi_aware()

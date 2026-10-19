@@ -21,6 +21,8 @@ from dataclasses import dataclass
 
 from loguru import logger
 from PIL import Image, ImageDraw
+
+from activity import highlight_fields
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.frames.frames import CancelFrame, EndFrame, Frame, OutputImageRawFrame, StartFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
@@ -216,6 +218,7 @@ class ScreenStreamer(FrameProcessor):
         await self.push_frame(RTVIServerMessageFrame(data={
             "type": "aktivitaet", "id": f"{name}-{uuid.uuid4().hex[:8]}", "name": name,
             "detail": str(result.get("summary", ""))[:80], "status": status,
+            **highlight_fields(result),  # Lichtrahmen im Schleier, wie bei nieekis eigenen Aktionen
         }))
         return result
 

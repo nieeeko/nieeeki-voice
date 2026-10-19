@@ -174,6 +174,7 @@ function createOverlays() {
         backgroundThrottling: false,
       },
     });
+    win.nieeekiBounds = display.bounds; // fuer den Lichtrahmen: welcher Ausschnitt gehoert hierher
     win.setIgnoreMouseEvents(true); // Klicks gehen durch auf darunterliegende Programme
     win.setAlwaysOnTop(true, "screen-saver");
     win.setVisibleOnAllWorkspaces(true);
@@ -295,6 +296,33 @@ ipcMain.on("levels", (event, sample) => {
     speaker: Math.max(0, Math.min(7, Math.trunc(Number(sample?.speaker)) || 0)),
   };
   for (const w of overlays) if (!w.isDestroyed()) w.webContents.send("levels", s);
+});
+
+// ---------- Lichtrahmen: wo nieeeki gerade handelt ----------
+// Kommt von der Oberflaeche (Host-Ergebnis: Fensterrechteck und Klickpunkt in Bildschirmpixeln).
+// Electron rechnet in geraeteunabhaengige Pixel um; jedes Rand-Fenster bekommt nur seinen Ausschnitt.
+ipcMain.on("highlight", (event, data) => {
+  if (!mainWin || event.sender !== mainWin.webContents) return; // nur das Hauptfenster darf senden
+  const ints = (v, n) => (Array.isArray(v) && v.length === n && v.every(Number.isInteger) ? v : null);
+  const rect = ints(data?.rahmen, 4);
+  const point = ints(data?.punkt, 2);
+  if (!rect && !point) return;
+  const dip = (x, y) => screen.screenToDipPoint({ x, y });
+  const corners = rect && [dip(rect[0], rect[1]), dip(rect[2], rect[3])];
+  const tap = point && dip(point[0], point[1]);
+  for (const w of overlays) {
+    if (w.isDestroyed() || !w.isVisible()) continue;
+    const b = w.nieeekiBounds;
+    const frame = corners && {
+      x: corners[0].x - b.x, y: corners[0].y - b.y, w: corners[1].x - corners[0].x, h: corners[1].y - corners[0].y,
+    };
+    const dot = tap && { x: tap.x - b.x, y: tap.y - b.y };
+    const showFrame = frame && frame.x < b.width && frame.y < b.height && frame.x + frame.w > 0 && frame.y + frame.h > 0;
+    const showDot = dot && dot.x >= 0 && dot.y >= 0 && dot.x < b.width && dot.y < b.height;
+    if (showFrame || showDot) {
+      w.webContents.send("highlight", { ok: Boolean(data?.ok), rahmen: showFrame ? frame : null, punkt: showDot ? dot : null });
+    }
+  }
 });
 
 function clamp(v) {

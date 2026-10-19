@@ -164,3 +164,18 @@ if (!gl) {
   }
   requestAnimationFrame(frame);
 }
+
+// Lichtrahmen: wo nieeeki gerade handelt. main.js schickt Rahmen und Klickpunkt schon in den
+// Koordinaten dieses Monitors (geraeteunabhaengige Pixel); rot, wenn die Aktion abgelehnt wurde.
+function flash(kind, box, ok, ms) {
+  const el = document.createElement("div");
+  el.className = ok ? kind : `${kind} nein`;
+  for (const [key, value] of Object.entries(box)) el.style[key] = `${Math.round(value)}px`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), ms);
+}
+
+window.overlay.onHighlight((h) => {
+  if (h.rahmen) flash("frame", { left: h.rahmen.x, top: h.rahmen.y, width: h.rahmen.w, height: h.rahmen.h }, h.ok, 1800);
+  if (h.punkt) flash("tap", { left: h.punkt.x, top: h.punkt.y }, h.ok, 1000);
+});

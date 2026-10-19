@@ -39,6 +39,17 @@ def _parse(result) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def highlight_fields(result) -> dict:
+    """Fensterrechteck und Klickpunkt aus dem Host-Ergebnis: Lichtrahmen im Schleier der Desktop-App."""
+    data = _parse(result) or {}
+    out = {}
+    for key, size in (("rahmen", 4), ("punkt", 2)):
+        value = data.get(key)
+        if isinstance(value, list) and len(value) == size and all(type(v) is int for v in value):
+            out[key] = value
+    return out
+
+
 def approval_card(name: str, args: dict, result) -> dict | None:
     """PC-Aktion, die Nikolaj freigeben muss (Host: status=needs_approval) -> Karte in der UI."""
     data = _parse(result)
@@ -84,6 +95,7 @@ class ActivityReporter(FrameProcessor):
                 "type": "aktivitaet", "id": frame.tool_call_id, "name": frame.function_name,
                 "detail": _detail(frame.function_name, frame.arguments),
                 "status": "fehler" if frame.error else _status(frame.result),
+                **({} if frame.error else highlight_fields(frame.result)),
             }))
             if card := approval_card(frame.function_name, frame.arguments, frame.result):
                 await self.push_frame(RTVIServerMessageFrame(data=card))
