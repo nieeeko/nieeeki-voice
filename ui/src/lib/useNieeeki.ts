@@ -150,6 +150,8 @@ export function useNieeeki() {
       callbacks: {
         onBotReady: () => setPresence("idle"),
         onDisconnected: () => {
+          // Auch wenn der Voice-Core trennt (z. B. ein neueres Gespraech uebernimmt): Platz frei machen
+          if (clientRef.current === client) clientRef.current = null;
           setPresence("offline");
           setScreenOn(false);
           setScreenTrack(null);
@@ -256,8 +258,9 @@ export function useNieeeki() {
       await client.startBotAndConnect({
         endpoint: `${VOICE_CORE_URL}/start`,
         headers: new Headers(token ? { Authorization: `Bearer ${token}` } : {}),
-        // Immer gueltiges JSON (leerer Body gab einen ERROR im Log); per Weckwort begruesst sie nur kurz
-        requestData: anlass === "weckwort" ? { anlass } : {},
+        // Immer gueltiges JSON (leerer Body gab einen ERROR im Log). Beim Bot kommt nur "body" an
+        // (Pipecat-Runner); per Weckwort begruesst sie damit nur kurz ("Ja?").
+        requestData: anlass === "weckwort" ? { body: { anlass } } : {},
       });
     } catch (e) {
       setPresence("offline");
@@ -283,12 +286,30 @@ export function useNieeeki() {
     setPresence("offline");
   }, [setPresence]);
 
-  // Desktop-App: "nieeeki" gesagt -> Gespraech starten (nur wenn keins laeuft)
+  // Desktop-App: "nieeeki" gesagt -> Gespraech starten (nur wenn keins laeuft, auch kein halb offenes)
   useEffect(() => {
     return window.nieeekiDesktop?.onWake?.(() => {
-      if (presenceRef.current === "offline") void start("weckwort");
+      if (presenceRef.current === "offline" && !clientRef.current) void start("weckwort");
     });
   }, [start]);
+
+  // Wird die Oberflaeche ausgehaengt (Abmelden, automatisches Abmelden, Neuladen), endet auch ihr
+  // Gespraech. Sonst lief die Verbindung unsichtbar weiter (19.10.: das Weckwort startete daneben ein
+  // zweites, beide sprachen gleichzeitig).
+  useEffect(() => {
+    const audio = audioRef;
+    const meter = botMeter;
+    const client = clientRef;
+    return () => {
+      const running = client.current;
+      client.current = null;
+      void running?.disconnect();
+      audio.current?.pause();
+      void meter.current?.ctx.close();
+      meter.current = null;
+      window.nieeekiDesktop?.conversation?.(false);
+    };
+  }, []);
 
   // Waehrend eines Gespraechs pausiert der Weckwort-Lauscher (das Mikrofon gehoert dem Gespraech)
   useEffect(() => {
