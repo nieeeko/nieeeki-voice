@@ -70,6 +70,7 @@ from learning import learn_from_session
 from dev_agent import DevAgent
 from pc_host import host_client, host_tools
 from screen import register_screen_tools
+from screen_stream import ScreenStreamer, register_stream_tool, video_params
 from tools import register_tools
 from soniox_tts import LazySonioxTTSService
 from soft_interrupt import (
@@ -176,6 +177,7 @@ transport_params = {
     "webrtc": lambda: TransportParams(
         audio_in_enabled=True,
         audio_out_enabled=True,
+        **video_params(),  # Bildschirm-Stream (screen_stream.py), nur auf Wunsch
     ),
 }
 
@@ -224,7 +226,10 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     # Entwicklungsauftraege an Claude Code; Freigaben per Klick in der UI (siehe dev_agent.py)
     dev = DevAgent(memory, user_turns=lambda: sum(1 for role, _ in transcript if role == "user"))
     dev.register(llm)
-    tools = ToolsSchema(standard_tools=[*tools.standard_tools, *dev.schemas()])
+    # Live-Bildschirm in der Oberflaeche (Fernzugriff vom Handy), per Knopf oder Werkzeug
+    streamer = ScreenStreamer()
+    stream_schema = register_stream_tool(llm, streamer)
+    tools = ToolsSchema(standard_tools=[*tools.standard_tools, *dev.schemas(), stream_schema])
     context = LLMContext(tools=tools)
 
     # PC-Werkzeuge (Host per MCP-stdio) im Hintergrund dazuholen: das Gespraech wartet nicht darauf.
@@ -312,6 +317,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             llm,
             ActivityReporter(),  # Werkzeugaufrufe live an die Oberflaeche (Zeitleiste)
             tts,
+            streamer,  # schiebt bei Bedarf Bildschirmbilder in die Videospur
             transport.output(),
             PlaybackTracker(soft_gate),
             assistant_agg,
@@ -327,6 +333,9 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     @task.rtvi.event_handler("on_client_message")
     async def on_client_message(_rtvi, msg):
         # Klicks aus der UI (z. B. Freigaben). Kommt nur ueber die eigene WebRTC-Verbindung.
+        if msg.type == "bildschirm":
+            await streamer.set_active(bool((msg.data or {}).get("an")), "Knopf")
+            return
         await dev.on_client_message(msg.type, msg.data or {})
 
     @assistant_agg.event_handler("on_assistant_turn_stopped")

@@ -4,6 +4,7 @@ import { ActivityFeed } from "@/components/ActivityFeed";
 import { Canvas } from "@/components/Canvas";
 import { LoginGate } from "@/components/LoginGate";
 import { Orb } from "@/components/Orb";
+import { ScreenView } from "@/components/ScreenView";
 import { VoiceLine } from "@/components/VoiceLine";
 import { useNieeeki, type Presence } from "@/lib/useNieeeki";
 
@@ -41,6 +42,9 @@ function Nieeeki({ signOut }: { signOut: () => void }) {
     approvals,
     activities,
     acting,
+    screenOn,
+    screenTrack,
+    toggleScreen,
     decide,
     connect,
     disconnect,
@@ -49,7 +53,7 @@ function Nieeeki({ signOut }: { signOut: () => void }) {
   const state = acting && online ? "handelt" : PRESENCE_TEXT[presence];
 
   return (
-    <div className="shell" data-presence={presence} data-acting={acting}>
+    <div className="shell" data-presence={presence} data-acting={acting} data-screen={screenOn}>
       <div className="aurora" aria-hidden="true">
         <span />
         <span />
@@ -108,6 +112,12 @@ function Nieeeki({ signOut }: { signOut: () => void }) {
           </section>
         )}
 
+        {online && (
+          <button type="button" className="screen-toggle" onClick={toggleScreen} aria-pressed={screenOn}>
+            {screenOn ? "Bildschirm ausblenden" : "Bildschirm zeigen"}
+          </button>
+        )}
+
         <button
           className="wake"
           onClick={online ? disconnect : connect}
@@ -128,9 +138,10 @@ function Nieeeki({ signOut }: { signOut: () => void }) {
       </section>
 
       <section className="canvas" aria-label="Canvas">
+        {screenOn && <ScreenView track={screenTrack} />}
         {canvasItems.length > 0 ? (
           <Canvas items={canvasItems} />
-        ) : (
+        ) : screenOn ? null : (
           <div className="canvas-empty">
             <h2>Was nieeeki dir hier zeigt</h2>
             <p>Ergebnisse, die man sehen muss, landen auf dieser Fläche statt in der Sprache.</p>
