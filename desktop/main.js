@@ -178,9 +178,56 @@ function createOverlays() {
     win.setAlwaysOnTop(true, "screen-saver");
     win.setVisibleOnAllWorkspaces(true);
     win.loadFile(path.join(__dirname, "overlay.html"), { query: { veil: String(veilWidthDip()) } });
-    win.once("ready-to-show", () => borderOn && win.showInactive());
+    win.once("ready-to-show", () => borderOn && !fullscreenApp && win.showInactive());
     return win;
   });
+}
+
+// ---------- Vollbild-Programme (Spiele, Videos, Praesentationen) ----------
+// Bei Vollbild stoert der Schleier und kann Spiele aus dem schnellen Darstellungsmodus druecken.
+// Windows meldet den Zustand ueber SHQueryUserNotificationState: 2 Vollbild-Programm, 3 Direct3D-
+// Vollbild (Spiele), 4 Praesentation. Electron kann das nicht selbst fragen, darum ein kleiner
+// PowerShell-Waechter; er beendet sich, sobald die Desktop-App weg ist.
+let fullscreenApp = false;
+let fullscreenWatcher = null;
+const FULLSCREEN_STATES = new Set([2, 3, 4]);
+
+function watchFullscreen() {
+  const script = [
+    "$ProgressPreference = 'SilentlyContinue'",
+    "Add-Type -Namespace Nieeeki -Name Shell -MemberDefinition '[DllImport(\"shell32.dll\")] public static extern int SHQueryUserNotificationState(out int state);'",
+    `while (Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue) { $s = 0; [void][Nieeeki.Shell]::SHQueryUserNotificationState([ref]$s); [Console]::Out.WriteLine($s); Start-Sleep -Milliseconds 1500 }`,
+  ].join("; ");
+  const encoded = Buffer.from(script, "utf16le").toString("base64"); // ohne Anfuehrungszeichen-Probleme
+  fullscreenWatcher = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], {
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  let buffer = "";
+  let last = null;
+  fullscreenWatcher.stdout.on("data", (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop();
+    for (const line of lines) {
+      const busy = FULLSCREEN_STATES.has(Number(line.trim()));
+      // erst bei zwei gleichen Abfragen hintereinander umschalten: kein Flackern
+      if (busy === last && busy !== fullscreenApp) {
+        fullscreenApp = busy;
+        updateOverlayVisibility();
+      }
+      last = busy;
+    }
+  });
+  fullscreenWatcher.on("exit", () => {
+    fullscreenWatcher = null;
+    if (!quitting) setTimeout(watchFullscreen, 5000);
+  });
+}
+
+function updateOverlayVisibility() {
+  const show = borderOn && !fullscreenApp;
+  overlays.forEach((w) => !w.isDestroyed() && (show ? w.showInactive() : w.hide()));
 }
 
 // Nicht gepackte App: Windows muss electron.exe MIT dem App-Ordner starten
@@ -214,7 +261,7 @@ function createTray() {
         checked: borderOn,
         click: (item) => {
           borderOn = item.checked;
-          overlays.forEach((w) => (borderOn ? w.showInactive() : w.hide()));
+          updateOverlayVisibility();
         },
       },
       {
@@ -269,6 +316,7 @@ app.whenReady().then(async () => {
   await ensureServices();
   createMainWindow();
   createOverlays();
+  watchFullscreen();
   screen.on("display-added", createOverlays);
   screen.on("display-removed", createOverlays);
   screen.on("display-metrics-changed", createOverlays);
@@ -276,6 +324,7 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   quitting = true;
+  fullscreenWatcher?.kill();
   stopServices();
 });
 
