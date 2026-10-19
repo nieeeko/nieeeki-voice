@@ -2,6 +2,7 @@
 
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { Canvas } from "@/components/Canvas";
+import { LoginGate } from "@/components/LoginGate";
 import { Orb } from "@/components/Orb";
 import { VoiceLine } from "@/components/VoiceLine";
 import { useNieeeki, type Presence } from "@/lib/useNieeeki";
@@ -25,6 +26,10 @@ const CANVAS_KINDS = [
 ];
 
 export default function Home() {
+  return <LoginGate>{(signOut) => <Nieeeki signOut={signOut} />}</LoginGate>;
+}
+
+function Nieeeki({ signOut }: { signOut: () => void }) {
   const {
     presence,
     history,
@@ -109,6 +114,16 @@ export default function Home() {
           disabled={presence === "connecting"}
         >
           {online ? "Gespräch beenden" : presence === "connecting" ? "Verbinde …" : "Gespräch starten"}
+        </button>
+        <button
+          type="button"
+          className="gate-link"
+          onClick={() => {
+            void disconnect();
+            signOut();
+          }}
+        >
+          Abmelden
         </button>
       </section>
 

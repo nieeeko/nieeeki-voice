@@ -310,6 +310,39 @@ body {
 }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
+/* Anmeldung: Glaskarte vor der atmenden Aurora */
+.gate { position: relative; isolation: isolate; min-height: 100dvh; display: grid; place-items: center; padding: 24px 16px; }
+.gate-card {
+  width: min(100%, 400px); display: flex; flex-direction: column; gap: 18px; padding: 36px 32px;
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--panel) 66%, transparent);
+  backdrop-filter: blur(22px) saturate(1.2);
+  border: 1px solid color-mix(in srgb, var(--rule) 70%, transparent);
+  box-shadow: 0 30px 80px -40px color-mix(in srgb, var(--voice-bot) 55%, transparent);
+  animation: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.gate .wordmark { text-align: center; }
+.gate-hint { margin: 0; color: var(--ink-soft); font-size: 15px; }
+.gate-form { display: flex; flex-direction: column; gap: 14px; }
+.gate-form label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; color: var(--ink-soft); }
+.gate-form input {
+  font: 500 17px var(--font-body), sans-serif; color: var(--ink);
+  padding: 12px 14px; border-radius: 12px; border: 1px solid var(--rule);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+}
+.gate-form input[name="code"] {
+  font: 600 24px ui-monospace, "Cascadia Code", Consolas, monospace; letter-spacing: 0.3em; text-align: center;
+}
+.gate-form .wake { margin-top: 6px; }
+.gate-qr { align-self: center; border-radius: 12px; background: #fff; padding: 10px; }
+.gate-secret { font-size: 14px; color: var(--ink-soft); }
+.gate-secret code { display: block; margin-top: 6px; font: 13px ui-monospace, "Cascadia Code", Consolas, monospace; word-break: break-all; }
+.gate-link {
+  appearance: none; border: 0; background: none; padding: 4px; align-self: center; cursor: pointer;
+  color: var(--ink-soft); font: 14px var(--font-body), sans-serif; text-decoration: underline;
+}
+.presence .wake { margin-bottom: -6px; }
+
 @media (prefers-reduced-motion: reduce) {
-  .aurora span, .state-dot, .lines p, .activity-item, .canvas-item, .kinds li { animation: none !important; }
+  .aurora span, .state-dot, .lines p, .activity-item, .canvas-item, .kinds li, .gate-card { animation: none !important; }
 }

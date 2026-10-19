@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { PipecatClient } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import type { CanvasItem } from "@/components/Canvas";
+import { accessToken } from "@/lib/supabase";
 
 export type Presence = "offline" | "connecting" | "idle" | "listening" | "thinking" | "speaking";
 
@@ -194,10 +195,20 @@ export function useNieeeki() {
     });
     clientRef.current = client;
     try {
-      await client.startBotAndConnect({ endpoint: `${VOICE_CORE_URL}/start` });
-    } catch {
+      // Der Voice-Core laesst nur Nikolaj mit zweitem Faktor herein (voice-core/auth_gate.py).
+      // Der Transport schickt diese Header auch beim WebRTC-Offer und den ICE-Updates mit.
+      const token = await accessToken();
+      await client.startBotAndConnect({
+        endpoint: `${VOICE_CORE_URL}/start`,
+        headers: new Headers(token ? { Authorization: `Bearer ${token}` } : {}),
+      });
+    } catch (e) {
       setPresence("offline");
-      setError(`Voice-Core unter ${VOICE_CORE_URL} nicht erreichbar. Läuft bot.py?`);
+      setError(
+        (e as { status?: number }).status === 401
+          ? "Der Voice-Core hat die Anmeldung abgelehnt. Bitte ab- und wieder anmelden."
+          : `Voice-Core unter ${VOICE_CORE_URL} nicht erreichbar. Läuft bot.py?`,
+      );
     }
   }, [setPresence]);
 
