@@ -69,7 +69,7 @@ export type LevelSample = { user: number; bot: number; cut: boolean; speaker: nu
 export type LevelHistory = { samples: LevelSample[]; seq: number };
 
 const VOICE_CORE_URL = process.env.NEXT_PUBLIC_VOICE_CORE_URL ?? "http://localhost:7860";
-// Nur diese Adresse (und localhost) laesst der Voice-Core herein (PIPECAT_ALLOWED_ORIGINS in bot.py)
+// Der Voice-Core laesst diese Adresse, localhost und die Vercel-Vorschauen herein (bot.py, auth_gate.py)
 const HOME_URL = "https://nieeeki.nieeeko.com";
 const HISTORY = 240; // ~12 s bei 20 Hz
 // Per Weckwort begonnene Gespraeche enden nach so langer Stille von selbst; dann lauscht der PC wieder.
@@ -261,15 +261,11 @@ export function useNieeeki() {
       });
     } catch (e) {
       setPresence("offline");
-      // Vercel-Vorschauen weist der Voice-Core per CORS ab (Schutz vor fremden Seiten); der Browser
-      // meldet das nur als Netzwerkfehler, darum hier ausdruecklich sagen, wo es geht.
-      const preview = window.location.hostname.endsWith(".vercel.app");
+      // Fremde Herkunft weist der Voice-Core per CORS ab; der Browser meldet das nur als Netzwerkfehler
       setError(
         (e as { status?: number }).status === 401
           ? "Der Voice-Core hat die Anmeldung abgelehnt. Bitte ab- und wieder anmelden."
-          : preview
-            ? `Vorschau-Adressen dürfen den Voice-Core nicht nutzen. Bitte ${HOME_URL} öffnen.`
-            : `Voice-Core unter ${VOICE_CORE_URL} nicht erreichbar. Läuft bot.py?`,
+          : `Voice-Core unter ${VOICE_CORE_URL} nicht erreichbar (läuft bot.py, ist die Adresse ${HOME_URL} oder eine Vorschau?).`,
       );
     }
   }, [setPresence]);

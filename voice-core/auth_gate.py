@@ -148,6 +148,33 @@ class OwnerOnlyMiddleware:
         await send({"type": "http.response.body", "body": body})
 
 
+# Vercel-Vorschauen dieses Projekts (z. B. nieeeki-voice-git-<branch>-nieeeko.vercel.app). Sie sind nur mit
+# Vercel-Anmeldung im Team erreichbar (Projekt-Schutz "all_except_custom_domains", geprueft am 19.10.2026);
+# herein kommt trotzdem nur, wer Nikolajs Login mit zweitem Faktor hat (OwnerOnlyMiddleware).
+DEFAULT_PREVIEW_ORIGIN_REGEX = r"https://nieeeki-voice-[a-z0-9-]+-nieeeko\.vercel\.app"
+
+
+def allow_preview_origins(runner) -> str | None:
+    """Laesst im CORS des Pipecat-Runners zusaetzlich die Vercel-Vorschauen zu (Muster statt fester Liste).
+
+    Der Runner kennt nur PIPECAT_ALLOWED_ORIGINS als Liste; er baut seine CORSMiddleware erst in main().
+    Hier wird die Klasse im Runner-Modul durch eine Variante mit allow_origin_regex ersetzt.
+    PIPECAT_ALLOWED_ORIGIN_REGEX="" schaltet das ab.
+    """
+    pattern = os.getenv("PIPECAT_ALLOWED_ORIGIN_REGEX", DEFAULT_PREVIEW_ORIGIN_REGEX).strip()
+    if not pattern:
+        return None
+    base = runner.CORSMiddleware
+
+    class PreviewCORSMiddleware(base):
+        def __init__(self, app, **kwargs):
+            kwargs.setdefault("allow_origin_regex", pattern)
+            super().__init__(app, **kwargs)
+
+    runner.CORSMiddleware = PreviewCORSMiddleware
+    return pattern
+
+
 def install_owner_gate(app) -> TokenVerifier:
     """Haengt die Zugangskontrolle vor alle Routen des Runners. Ohne Konfiguration: alles zu."""
     verifier = TokenVerifier(

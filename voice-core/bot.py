@@ -64,7 +64,7 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from memory import MemoryStore
 from persona import build_system_prompt, greeting_for
 from activity import ActivityReporter
-from auth_gate import install_owner_gate
+from auth_gate import allow_preview_origins, install_owner_gate
 from audio_monitor import AudioInputMonitor, SpeakerTracker
 from learning import learn_from_session
 from dev_agent import DevAgent
@@ -434,6 +434,7 @@ async def bot(runner_args: RunnerArguments):
 
 
 if __name__ == "__main__":
+    import pipecat.runner.run as runner
     from pipecat.runner.run import app, main
 
     # Nur die eigene Oberflaeche darf Sitzungen starten. Ohne Liste erlaubt der Runner jede
@@ -443,6 +444,8 @@ if __name__ == "__main__":
         os.environ["PIPECAT_ALLOWED_ORIGINS"] = (
             "http://localhost:3000,http://127.0.0.1:3000,https://nieeeki.nieeeko.com"
         )
+    # Dazu die Vercel-Vorschauen des Projekts (nur mit Vercel-Anmeldung erreichbar, auth_gate.py).
+    allow_preview_origins(runner)
     # Und auch von dort nur Nikolaj: Supabase-Login mit zweitem Faktor (auth_gate.py).
     install_owner_gate(app)
     main()

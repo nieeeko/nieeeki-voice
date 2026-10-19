@@ -11,7 +11,7 @@ import httpx
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from auth_gate import OwnerOnlyMiddleware, TokenVerifier
+from auth_gate import OwnerOnlyMiddleware, TokenVerifier, allow_preview_origins
 
 OWNER = "219cc195-1471-4bf6-a8b5-83b6a2fd8e8d"
 URL = "https://projekt.supabase.co"
@@ -153,6 +153,62 @@ class MiddlewareTests(unittest.IsolatedAsyncioTestCase):
     async def test_mit_token_durch(self):
         called, _ = await self.run_mw(self.http(auth=f"Bearer {token()}"))
         self.assertEqual(called, ["http"])
+
+
+class VorschauHerkunftTests(unittest.TestCase):
+    """CORS wie im Pipecat-Runner (feste Liste), ergaenzt um die Vercel-Vorschauen des Projekts."""
+
+    def client(self, env_regex=None):
+        from starlette.applications import Starlette
+        from starlette.middleware.cors import CORSMiddleware
+        from starlette.testclient import TestClient
+        from unittest import mock
+
+        runner = SimpleNamespace(CORSMiddleware=CORSMiddleware)
+        env = {} if env_regex is None else {"PIPECAT_ALLOWED_ORIGIN_REGEX": env_regex}
+        with mock.patch.dict("os.environ", env):
+            allow_preview_origins(runner)
+        app = Starlette()
+        app.add_middleware(
+            runner.CORSMiddleware, allow_origins=["https://nieeeki.nieeeko.com"],
+            allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
+        )
+        return TestClient(app)
+
+    def preflight(self, client, origin):
+        return client.options("/start", headers={
+            "Origin": origin, "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "authorization,content-type",
+        })
+
+    def test_vorschauen_und_produktion_erlaubt(self):
+        c = self.client()
+        for origin in [
+            "https://nieeeki.nieeeko.com",
+            "https://nieeeki-voice-git-feat-lichtrahmen-nieeeko.vercel.app",
+            "https://nieeeki-voice-a1b2c3d4e-nieeeko.vercel.app",
+        ]:
+            with self.subTest(origin=origin):
+                r = self.preflight(c, origin)
+                self.assertEqual(r.status_code, 200)
+                self.assertEqual(r.headers["access-control-allow-origin"], origin)
+
+    def test_fremde_herkunft_abgelehnt(self):
+        c = self.client()
+        for origin in [
+            "https://evil.vercel.app",
+            "https://nieeeki-voice-git-x-andere.vercel.app",
+            "https://nieeeki-voice-git-x-nieeeko.vercel.app.evil.com",
+            "http://nieeeki-voice-git-x-nieeeko.vercel.app",
+            "https://andere-app-nieeeko.vercel.app",
+        ]:
+            with self.subTest(origin=origin):
+                self.assertEqual(self.preflight(c, origin).status_code, 400)
+
+    def test_leeres_muster_schaltet_ab(self):
+        c = self.client(env_regex="")
+        r = self.preflight(c, "https://nieeeki-voice-git-feat-lichtrahmen-nieeeko.vercel.app")
+        self.assertEqual(r.status_code, 400)
 
 
 if __name__ == "__main__":

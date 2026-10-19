@@ -104,7 +104,8 @@ Grenzen: iOS pausiert die App im Hintergrund; das Gespräch läuft nur, solange 
 - Die Oberfläche (lokal, Desktop-App und `https://nieeeki.nieeeko.com`) beginnt mit einer Anmeldung:
   E-Mail und Passwort, danach der Code aus der Authenticator-App. Beim ersten Mal QR-Code scannen.
 - Der Voice-Core prüft jedes Token selbst (`voice-core/auth_gate.py`): nur `NIEEEKI_OWNER_ID` mit
-  zweitem Faktor (aal2), sonst 401. WebSockets sind gesperrt, erlaubte Herkünfte siehe `.env.example`.
+  zweitem Faktor (aal2), sonst 401. WebSockets sind gesperrt, erlaubte Herkünfte siehe `.env.example`:
+  Produktion, localhost und die Vercel-Vorschauen des Projekts (die sind nur mit Vercel-Anmeldung erreichbar).
 - Online über Tailscale (Phase 1, kostenlos für private Nutzung, keine offenen Ports am Router):
   1. Tailscale auf Laptop und Handy, beide mit demselben Konto anmelden.
   2. Auf dem Laptop: `tailscale serve --bg 7860` (Funnel bleibt aus: nur im eigenen Tailnet erreichbar).
