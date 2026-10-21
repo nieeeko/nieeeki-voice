@@ -4,7 +4,7 @@ import type { Activity } from "@/lib/useNieeeki";
 
 /** Was nieeeki gerade tut: Live-Zeitleiste der Werkzeugaufrufe (vom Voice-Core gemeldet). */
 
-const LABEL: Record<string, string> = {
+export const LABEL: Record<string, string> = {
   webseite_oeffnen: "öffnet Webseite",
   programm_oeffnen: "startet Programm",
   oeffnen_mit: "öffnet",
@@ -33,7 +33,7 @@ const LABEL: Record<string, string> = {
   system_info: "liest Systeminfos",
 };
 
-const STATUS_TEXT: Record<Activity["status"], string> = {
+export const STATUS_TEXT: Record<Activity["status"], string> = {
   laeuft: "läuft",
   fertig: "erledigt",
   abgelehnt: "nicht ausgeführt",
@@ -41,14 +41,24 @@ const STATUS_TEXT: Record<Activity["status"], string> = {
   wartet: "wartet auf Freigabe",
 };
 
+export function clockTime(ms?: number) {
+  return ms ? new Date(ms).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "";
+}
+
 export function ActivityFeed({ items }: { items: Activity[] }) {
-  if (!items.length) return null;
+  if (!items.length) {
+    return (
+      <p className="panel-empty">
+        Noch nichts passiert. Sobald nieeeki am PC etwas tut, steht hier jeder Schritt mit Uhrzeit.
+      </p>
+    );
+  }
   return (
     <section className="activity" aria-label="Was nieeeki gerade tut" aria-live="polite">
       <ol>
         {items.map((a) => (
           <li key={a.id} className="activity-item" data-status={a.status}>
-            <span className="activity-dot" aria-hidden="true" />
+            <span className="activity-time">{clockTime(a.seit)}</span>
             <span className="activity-what">
               {LABEL[a.name] ?? a.name}
               {a.detail && <span className="activity-detail"> {a.detail}</span>}

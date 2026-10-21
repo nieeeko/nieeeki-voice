@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { PipecatClient } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import type { CanvasItem } from "@/components/Canvas";
+import { EMPTY_MISSION, nextMission, type Mission } from "@/lib/mission";
 import { accessToken } from "@/lib/supabase";
 
 export type Presence = "offline" | "connecting" | "idle" | "listening" | "thinking" | "speaking";
@@ -50,7 +51,15 @@ function restoreAudio(audio: HTMLAudioElement | null, state: SoftStop) {
 }
 
 /** Aktion, die Nikolaj per Klick freigeben muss (Entwicklungsauftrag, PC, PC als Admin). */
-export type Approval = { job: string; projekt: string; id: string; grund: string; detail: string; admin?: boolean };
+export type Approval = {
+  job: string;
+  projekt: string;
+  id: string;
+  grund: string;
+  detail: string;
+  admin?: boolean;
+  seit?: number; // wann die Anfrage ankam (im Browser gesetzt)
+};
 
 /** Ein Werkzeugaufruf von nieeeki fuer die Aktivitaets-Zeitleiste (activity.py im Voice-Core). */
 export type Activity = {
@@ -60,6 +69,8 @@ export type Activity = {
   status: "laeuft" | "fertig" | "abgelehnt" | "fehler" | "wartet";
   rahmen?: number[]; // Fensterrechteck [links, oben, rechts, unten] in Bildschirmpixeln
   punkt?: number[]; // Klickpunkt [x, y]
+  seit?: number; // erste Meldung (Date.now(), im Browser gesetzt)
+  bis?: number; // letzter Statuswechsel
 };
 
 /** Ein Abtastwert der Stimmlinie: oben Nikolaj, unten nieeeki. */
@@ -67,6 +78,9 @@ export type LevelSample = { user: number; bot: number; cut: boolean; speaker: nu
 
 /** Verlauf der Stimmlinie; seq zaehlt jeden neuen Abtastwert (VoiceLine zeichnet nur dann neu). */
 export type LevelHistory = { samples: LevelSample[]; seq: number };
+
+/** Alles, was die Kommandozentrale (components/CommandCenter.tsx) anzeigt und bedient. */
+export type NieeekiState = ReturnType<typeof useNieeeki>;
 
 const VOICE_CORE_URL = process.env.NEXT_PUBLIC_VOICE_CORE_URL ?? "http://localhost:7860";
 // Der Voice-Core laesst diese Adresse, localhost und die Vercel-Vorschauen herein (bot.py, auth_gate.py)
@@ -91,6 +105,13 @@ export function useNieeeki() {
   const [canvasItems, setCanvasItems] = useState<CanvasItem[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
+  // Der aktuelle Auftrag (Schritte seit Nikolajs letzter Bitte) und seit wann das Gespraech laeuft
+  const [mission, setMission] = useState<Mission>(EMPTY_MISSION);
+  const missionRef = useRef<Mission>(EMPTY_MISSION);
+  const newTask = useRef(false);
+  const [connectedAt, setConnectedAt] = useState<number | null>(null);
+  // Getippter Text, waehrend das Gespraech erst aufgebaut wird
+  const pendingText = useRef<string | null>(null);
   // Live-Bildschirm des Laptops (voice-core/screen_stream.py), nur auf Wunsch
   const [screenOn, setScreenOn] = useState(false);
   const [screenTrack, setScreenTrack] = useState<MediaStreamTrack | null>(null);
@@ -148,10 +169,20 @@ export function useNieeeki() {
       enableMic: true,
       enableCam: false,
       callbacks: {
-        onBotReady: () => setPresence("idle"),
+        onBotReady: () => {
+          setPresence("idle");
+          setConnectedAt(Date.now());
+          const text = pendingText.current;
+          pendingText.current = null;
+          if (text) {
+            newTask.current = true;
+            void client.sendText(text, { run_immediately: true, audio_response: true });
+          }
+        },
         onDisconnected: () => {
           // Auch wenn der Voice-Core trennt (z. B. ein neueres Gespraech uebernimmt): Platz frei machen
           if (clientRef.current === client) clientRef.current = null;
+          setConnectedAt(null);
           setPresence("offline");
           setScreenOn(false);
           setScreenTrack(null);
@@ -161,7 +192,10 @@ export function useNieeeki() {
           if (presenceRef.current === "speaking") levels.current.cut = true;
           setPresence("listening");
         },
-        onUserStoppedSpeaking: () => setPresence("thinking"),
+        onUserStoppedSpeaking: () => {
+          newTask.current = true; // der naechste Werkzeugschritt beginnt einen neuen Auftrag
+          setPresence("thinking");
+        },
         onBotStartedSpeaking: () => {
           restoreVolume(); // neue Antwort nach einem weichen Stopp wieder hoerbar
           setBotLine("");
@@ -221,8 +255,17 @@ export function useNieeeki() {
           if (msg?.type === "aktivitaet") {
             const a = msg as unknown as Activity;
             if (a.id && a.name) {
-              // gleiche id = Statuswechsel; neueste oben, hoechstens 6 Eintraege
-              setActivities((list) => [a, ...list.filter((x) => x.id !== a.id)].slice(0, 6));
+              const now = Date.now();
+              // gleiche id = Statuswechsel; neueste oben, hoechstens 30 Eintraege
+              setActivities((list) => {
+                const prev = list.find((x) => x.id === a.id);
+                const item = { ...a, seit: prev?.seit ?? now, bis: now };
+                return [item, ...list.filter((x) => x.id !== a.id)].slice(0, 30);
+              });
+              const known = missionRef.current.steps.some((s) => s.id === a.id);
+              missionRef.current = nextMission(missionRef.current, a, now, newTask.current);
+              if (!known) newTask.current = false;
+              setMission(missionRef.current);
               // Desktop-App: Lichtrahmen ums Zielfenster und Welle am Klickpunkt
               if ((a.rahmen || a.punkt) && a.status !== "laeuft") {
                 window.nieeekiDesktop?.highlight?.({ rahmen: a.rahmen, punkt: a.punkt, ok: a.status === "fertig" });
@@ -230,12 +273,17 @@ export function useNieeeki() {
             }
           }
           if (msg?.type === "freigaben" && msg.job && msg.items) {
-            const { job, projekt = "" } = msg;
-            const fresh = msg.items.map((it) => ({ ...it, job, projekt }));
-            setApprovals((list) => [
-              ...list.filter((a) => !fresh.some((f) => f.job === a.job && f.id === a.id)),
-              ...fresh,
-            ]);
+            const { job, projekt = "", items } = msg;
+            const now = Date.now();
+            setApprovals((list) => {
+              const fresh = items.map((it) => ({
+                ...it,
+                job,
+                projekt,
+                seit: list.find((a) => a.job === job && a.id === it.id)?.seit ?? now,
+              }));
+              return [...list.filter((a) => !fresh.some((f) => f.job === a.job && f.id === a.id)), ...fresh];
+            });
           }
         },
         onError: (msg) => {
@@ -263,6 +311,7 @@ export function useNieeeki() {
         requestData: anlass === "weckwort" ? { body: { anlass } } : {},
       });
     } catch (e) {
+      pendingText.current = null; // nicht beim naechsten Verbinden unerwartet nachschicken
       setPresence("offline");
       // Fremde Herkunft weist der Voice-Core per CORS ab; der Browser meldet das nur als Netzwerkfehler
       setError(
@@ -275,9 +324,31 @@ export function useNieeeki() {
 
   const connect = useCallback(() => start("klick"), [start]);
 
+  // Getippte Bitte: geht wie gesprochen an nieeeki, sie antwortet mit Stimme. Laeuft noch kein
+  // Gespraech, wird es gestartet und der Text nach dem Verbindungsaufbau geschickt.
+  const sendText = useCallback(
+    (text: string) => {
+      const t = text.trim();
+      if (!t) return;
+      setUserLine(t);
+      const client = clientRef.current;
+      const p = presenceRef.current;
+      if (client && p !== "offline" && p !== "connecting") {
+        newTask.current = true;
+        void client.sendText(t, { run_immediately: true, audio_response: true });
+        return;
+      }
+      pendingText.current = t;
+      if (!client && p === "offline") void start("klick");
+    },
+    [start],
+  );
+
   const disconnect = useCallback(async () => {
     await clientRef.current?.disconnect();
     clientRef.current = null;
+    pendingText.current = null;
+    setConnectedAt(null);
     void botMeter.current?.ctx.close();
     botMeter.current = null;
     levels.current.bot = 0;
@@ -374,9 +445,12 @@ export function useNieeeki() {
     canvasItems,
     approvals,
     activities,
+    mission,
+    connectedAt,
     acting,
     screenOn,
     screenTrack,
+    sendText,
     toggleScreen,
     clickScreen,
     scrollScreen,

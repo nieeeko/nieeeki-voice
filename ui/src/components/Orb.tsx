@@ -4,18 +4,18 @@ import { useEffect, useRef, type RefObject } from "react";
 import type { LevelSample, Presence } from "@/lib/useNieeeki";
 
 /**
- * Lebendige Praesenz von nieeeki: eine atmende Lichtkugel (WebGL-Shader).
+ * Lebendige Praesenz von nieeeki: ein gluehender Kern (WebGL-Shader), gefasst von HudOrb.
  * - schlaeft: gedimmt, langsamer Atem
- * - ist da: ruhiges Atmen, Farben fliessen zwischen Seeblau und Indigo
- * - hoert zu: neigt sich zur Farbe des Sprechers, Rand zittert mit seiner Stimme
+ * - ist da: ruhiges Atmen, Glut fliesst zwischen Rotorange und Orange
+ * - hoert zu: neigt sich zur Farbe des Sprechers (Nikolaj warmes Weiss), Rand zittert mit seiner Stimme
  * - denkt nach: schneller Wirbel mit umlaufendem Lichtbogen
- * - spricht: Indigo, pulsiert mit nieekis Stimme
+ * - spricht: Rotorange, pulsiert mit nieekis Stimme
  * - handelt (Werkzeug laeuft): kreisende Lichtpunkte
  * Pegel werden pro Bild aus einem Ref gelesen, React rendert dafuer nicht neu.
  */
 
-const SPEAKER_RGB = [[79, 179, 199], [242, 170, 76], [110, 200, 120], [236, 112, 170], [230, 210, 90]];
-const BOT_RGB = [154, 134, 242];
+const SPEAKER_RGB = [[241, 237, 230], [255, 176, 32], [110, 200, 160], [236, 112, 170], [120, 170, 255]];
+const BOT_RGB = [255, 74, 28];
 
 const STATE: Record<Presence, { awake: number; think: number; speed: number }> = {
   offline: { awake: 0.42, think: 0, speed: 0.35 },
@@ -52,7 +52,8 @@ void main() {
 
   // Rand: atmet, waechst mit der Stimme, wird vom Rauschen gewellt (staerker beim Sprechen/Denken)
   float n = fbm(vec3(cos(a) * 1.6 + t * 0.25, sin(a) * 1.6 - t * 0.2, t * 0.45));
-  float radius = 0.25 + 0.018 * uBreath + 0.075 * speak + (n - 0.5) * (0.03 + 0.09 * speak + 0.05 * uThink);
+  // kleiner als die HUD-Fassung (r 0,295): dunkler Spalt zwischen Glut und Ring
+  float radius = 0.16 + 0.012 * uBreath + 0.05 * speak + (n - 0.5) * (0.02 + 0.06 * speak + 0.035 * uThink);
   float inside = smoothstep(radius, radius - 0.01, r);
 
   // Inneres: fliessende Tiefe, beim Denken als Wirbel
@@ -60,11 +61,11 @@ void main() {
   vec2 w = vec2(cos(swirl) * uv.x - sin(swirl) * uv.y, sin(swirl) * uv.x + cos(swirl) * uv.y);
   float m = fbm(vec3(w * 3.2 + vec2(t * 0.18, -t * 0.12), t * 0.35));
   float userShare = uUser / (uUser + uBot + 0.0001);
-  vec3 voice = mix(uBotCol, uUserCol, userShare);
-  vec3 idle = mix(uBotCol, uUserCol, 0.35 + 0.25 * sin(t * 0.4));
+  vec3 voice = mix(uBotCol, uUserCol, userShare * 0.55);  // Nikolaj hellt auf, die Glut bleibt warm
+  vec3 idle = mix(uBotCol, vec3(1.0, 0.54, 0.16), 0.3 + 0.25 * sin(t * 0.4));  // Glut: Rotorange <-> Orange
   vec3 col = mix(idle, voice, smoothstep(0.02, 0.18, speak));
   col = mix(col * 0.5, col * 1.2, m);
-  col += vec3(0.22) * pow(max(0.0, 1.0 - r / max(radius, 0.001)), 3.0);   // Kern-Licht
+  col += vec3(1.0, 0.72, 0.32) * 0.75 * pow(max(0.0, 1.0 - r / max(radius, 0.001)), 2.2);   // heisse Mitte
 
   // Lichtkomet beim Denken (Kopf voraus, Schweif dahinter, leise Umlaufbahn),
   // kreisende Lichtpunkte mit Hof beim Handeln
@@ -80,7 +81,7 @@ void main() {
   dots *= uAct;
 
   // Leuchten nach aussen
-  float glow = exp(-max(r - radius, 0.0) * 16.0) * (0.22 + 0.55 * speak + 0.2 * uThink);
+  float glow = exp(-max(r - radius, 0.0) * 11.0) * (0.32 + 0.5 * speak + 0.2 * uThink);
   vec3 halo = mix(uBotCol, voice, 0.6);
   float alpha = inside + (1.0 - inside) * glow;
   vec3 outCol = mix(halo, col, inside);

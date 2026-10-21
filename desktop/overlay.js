@@ -4,12 +4,13 @@
 //
 // WebGL-Fragment-Shader: jeder Bildpunkt kennt seinen Abstand zur naechsten Kante. Im Leerlauf
 // "atmet" der Schleier leise (6-s-Zyklus), beim Sprechen waechst und leuchtet er in der Farbe der
-// Stimme: Nikolaj seeblau, weitere Sprecher eigene Farben, nieeeki indigo, Unterbrechung rot.
+// Stimme (wie die Kommandozentrale der Oberflaeche): Nikolaj warmes Weiss, weitere Sprecher eigene
+// Farben, nieeeki Rotorange, Unterbrechung Magentarot.
 // Leistung: halbe Aufloesung (der Schleier ist ohnehin weich), Mitte wird sofort verworfen,
 // 30 Bilder/s beim Sprechen, 12 im Leerlauf, weniger Bewegung bei prefers-reduced-motion.
 
-const SPEAKER_RGB = [[79, 179, 199], [242, 170, 76], [110, 200, 120], [236, 112, 170], [230, 210, 90]];
-const BOT_RGB = [154, 134, 242];
+const SPEAKER_RGB = [[241, 237, 230], [255, 176, 32], [110, 200, 160], [236, 112, 170], [120, 170, 255]];
+const BOT_RGB = [255, 74, 28];
 const RENDER_SCALE = 0.5;
 const VEIL_DIP = Number(new URLSearchParams(location.search).get("veil")) || 172;
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -84,7 +85,7 @@ void main() {
   vec3 voice = (uUserCol * uUser + uBotCol * uBot) / total;
   vec3 col = mix(uBotCol * 0.9, voice, smoothstep(0.02, 0.2, speak));
   col += 0.18 * (n - 0.5);                         // Schimmer im Schleier
-  col = mix(col, vec3(0.94, 0.48, 0.43), uCut * 0.75);
+  col = mix(col, vec3(1.0, 0.18, 0.39), uCut * 0.75);
 
   float alpha = f * (0.07 + 0.06 * uBreath + 0.55 * speak + 0.45 * uCut);
   alpha *= 0.82 + 0.36 * n;

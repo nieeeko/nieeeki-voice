@@ -119,9 +119,9 @@ function MermaidView({ source }: { source: string }) {
     (async () => {
       try {
         const mermaid = (await import("mermaid")).default;
-        const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
         // strict: Mermaid saeubert das SVG selbst (kein HTML/Script aus dem Diagrammtext).
-        mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: dark ? "dark" : "neutral" });
+        // Thema immer dunkel: die Oberflaeche ist eine dunkle Kommandozentrale (globals.css).
+        mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "dark" });
         const { svg } = await mermaid.render(`m${id}`, source);
         if (!cancelled && ref.current) {
           ref.current.innerHTML = svg;
