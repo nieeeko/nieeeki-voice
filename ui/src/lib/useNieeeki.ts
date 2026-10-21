@@ -164,7 +164,8 @@ export function useNieeeki() {
       // Weicher Stopp: in der naechsten Wortpause (spaetestens nach 600 ms) ausblenden. Hing frueher
       // an onRemoteAudioLevel, das bei SmallWebRTC nie feuert, und war deshalb nie aktiv.
       const stop = softStop.current;
-      if (stop.armedAt && !stop.fading && (levels.current.bot < 0.015 || performance.now() - stop.armedAt > 600)) {
+      // 350 statt 600 ms: der Server stoppt jetzt schon an der Wortgrenze, laenger warten wirkte hakelig
+      if (stop.armedAt && !stop.fading && (levels.current.bot < 0.015 || performance.now() - stop.armedAt > 350)) {
         fadeOutAudio(audioRef.current, stop);
       }
       const s = { ...levels.current };

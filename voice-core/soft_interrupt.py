@@ -1,12 +1,13 @@
-"""Weiche Unterbrechung: nieeeki spricht den Satz zu Ende, statt mitten im Wort abzubrechen.
+"""Weiche Unterbrechung: nieeeki hoert an der naechsten Wortgrenze auf, nie mitten im Wort.
 
 Ablauf
   * Die Start-Strategie meldet Nikolajs Turn OHNE sofortige Unterbrechung
     (MinWordsUserTurnStartStrategy(enable_interruptions=False)).
   * SoftInterruptGate (zwischen user_agg und llm) merkt: Nikolaj redet, waehrend nieeeki spricht.
   * PlaybackTracker (nach transport.output) meldet jedes Wort, sobald es laut Zeitstempel beginnt.
-  * Unterbrochen wird an der naechsten Satzgrenze, spaetestens aber nach dem laufenden Wort plus
-    max_words weiteren Woertern, also immer an einer Wortgrenze.
+  * Unterbrochen wird nach dem laufenden Wort plus max_words weiteren Woertern (Standard 0: am Ende
+    des laufenden Worts) oder an einer Satzgrenze, wenn die vorher kommt. 21.10.: Mit "Satz zu Ende
+    oder drei Woerter" sprach sie bis zu 2,5 s ueber Nikolaj hinweg; das wirkte hakelig.
   * Die Wort-Zeitstempel laufen dem hoerbaren Ton voraus (Puffer im WebRTC-Pfad). Deshalb wird
     die Unterbrechung um playback_lag_secs verzoegert; Woerter in dieser Spanne gelten als nicht
     gesprochen.
@@ -50,17 +51,32 @@ BACKCHANNEL_WORDS = frozenset(
 )
 
 
+# Sofort-Woerter: Nikolaj will, dass sie aufhoert. Unterbrechen schon allein, ohne Mindestzahl.
+STOP_WORDS = frozenset({"stopp", "stop", "halt", "warte", "wart", "moment", "nein", "nee", "ruhe", "pause", "leise"})
+
+
+def _words(text: str) -> list[str]:
+    return [w.strip(".,!?…:;-\"'").lower() for w in text.split()]
+
+
 def meaningful_word_count(text: str) -> int:
     """Zaehlt echte Woerter. Einzelne Buchstaben sind Bruchstuecke der Live-Erkennung
     ("J" vor "Ja", "H" vor "Hi") und zaehlen nicht."""
-    words = (w.strip(".,!?…:;-\"'").lower() for w in text.split())
-    return sum(1 for w in words if len(w) >= 2 and w not in BACKCHANNEL_WORDS)
+    return sum(1 for w in _words(text) if len(w) >= 2 and w not in BACKCHANNEL_WORDS)
+
+
+def is_stop_request(text: str) -> bool:
+    """'Stopp', 'warte', 'nein', 'Moment': sofort aufhoeren, auch wenn es nur ein Wort ist."""
+    return any(w in STOP_WORDS for w in _words(text))
 
 
 class MeaningfulWordsUserTurnStartStrategy(MinWordsUserTurnStartStrategy):
     """Wie MinWords, aber waehrend nieeeki spricht zaehlen Rueckmeldelaute nicht mit.
 
-    "mhm" oder "ja genau" lassen sie weiterreden, ein einzelnes "Doch" oder "Stopp" unterbricht.
+    "mhm" oder "ja genau" lassen sie weiterreden. Unterbrochen wird ab min_words echten Woertern
+    (Soniox liefert den bisherigen Satz in jeder Teil-Erkennung, gezaehlt wird also der ganze Einwurf)
+    oder sofort bei einem Sofort-Wort wie "Stopp". 21.10.: Mit einem einzigen Wort genuegten schon
+    Bruchstuecke wie " Al" oder " Du" fuer eine Unterbrechung an der falschen Stelle.
     Spricht sie nicht, startet wie bisher jedes Wort den Turn.
     """
 
@@ -68,7 +84,7 @@ class MeaningfulWordsUserTurnStartStrategy(MinWordsUserTurnStartStrategy):
         if not self._bot_speaking:
             return await super()._handle_transcription(frame)
         count = meaningful_word_count(frame.text)
-        if count >= self._min_words:
+        if count >= self._min_words or is_stop_request(frame.text):
             logger.debug(f"{self}: Einwurf erkannt ({frame.text!r})")
             await self.trigger_user_turn_started()
             return ProcessFrameResult.STOP
@@ -83,7 +99,7 @@ class SoftInterruptGate(FrameProcessor):
     def __init__(
         self,
         *,
-        max_words: int = 3,
+        max_words: int = 0,
         playback_lag_secs: float = 0.5,
         **kwargs,
     ):
@@ -171,7 +187,7 @@ class SoftInterruptGate(FrameProcessor):
         self._pending = True
         self._words_left = self._max_words
         self._turns_at_arm = self._turns_recorded
-        logger.debug(f"{self}: Nikolaj spricht, nieeeki beendet erst den Satz")
+        logger.debug(f"{self}: Nikolaj spricht, nieeeki hoert an der naechsten Wortgrenze auf")
 
     def _start_fire(self, reason: str, *, interrupt: bool = True):
         if not self._pending:

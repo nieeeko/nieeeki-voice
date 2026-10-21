@@ -107,8 +107,10 @@ DEFAULT_STT_TERMS = (
 )
 STT_TERMS = [t.strip() for t in os.getenv("SONIOX_TERMS", DEFAULT_STT_TERMS).split(",") if t.strip()]
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-5-5")
-# Woerter ohne Rueckmeldelaute, ab denen sie unterbrochen wird ("Doch" reicht, "mhm" nicht)
-MIN_INTERRUPT_WORDS = int(os.getenv("MIN_INTERRUPT_WORDS", "1"))
+# Woerter ohne Rueckmeldelaute, ab denen sie unterbrochen wird ("mhm", "ja genau" nie). Sofort-Woerter
+# wie "Stopp" oder "warte" unterbrechen immer (soft_interrupt.STOP_WORDS). 21.10.: Mit 1 genuegten
+# Bruchstuecke der Live-Erkennung (" Al", " Du") fuer eine Unterbrechung an der falschen Stelle.
+MIN_INTERRUPT_WORDS = int(os.getenv("MIN_INTERRUPT_WORDS") or 2)
 # Lernen im laufenden Gespraech: nach so vielen neuen Saetzen von Nikolaj wertet Haiku den
 # Abschnitt aus; Neues landet sofort im System-Prompt.
 LEARN_EVERY_USER_TURNS = int(os.getenv("LEARN_EVERY_USER_TURNS") or 4)
@@ -123,7 +125,9 @@ SUMMARY_PROMPT = (
 NIEEEKI_GREETING = os.getenv("NIEEEKI_GREETING", "Hi Nikolaj, ich bin da.")
 NIEEEKI_WAKE_GREETING = os.getenv("NIEEEKI_WAKE_GREETING", "Ja?")  # per Weckwort gestartet
 # Haelt Claude Nikolajs Satz fuer unvollstaendig, wartet sie so lange auf den Rest (Sekunden).
-SMART_TURN_STOP_SECS = float(os.getenv("SMART_TURN_STOP_SECS") or 1.0)
+# 0,6 statt 1,0 s: 95 % der Antworten warteten hier bis zu 1 s (Messung 20./21.10.). Ob Nikolaj wirklich
+# fertig ist, entscheidet danach ohnehin Claude (◐ = weiter warten), darum ist kuerzer hier sicher.
+SMART_TURN_STOP_SECS = float(os.getenv("SMART_TURN_STOP_SECS") or 0.6)
 TURN_INCOMPLETE_SHORT_SECS = float(os.getenv("TURN_INCOMPLETE_SHORT_SECS") or 1.5)
 # Nach einer Pause fragt Pipecat Claude erneut. Die englischen Standardtexte fuehrten dazu, dass
 # Claude nur den Marker "●" ohne Text schickte: nieeeki blieb stumm.
@@ -142,9 +146,9 @@ PAUSE_LONG_PROMPT = (
     "'sag weiter'. WICHTIG: Beginne mit ● und einem Leerzeichen, dann dein Text. Nie ● allein."
 )
 TURN_INCOMPLETE_LONG_SECS = float(os.getenv("TURN_INCOMPLETE_LONG_SECS") or 3.0)  # 8 s fuehlte sich wie ein Haenger an
-# Weiche Unterbrechung: nach einem Einwurf spricht sie den Satz zu Ende, hoechstens aber
-# das laufende Wort plus so viele weitere Woerter (nie mitten im Wort).
-SOFT_INTERRUPT_MAX_WORDS = int(os.getenv("SOFT_INTERRUPT_MAX_WORDS") or 3)
+# Weiche Unterbrechung: nach einem Einwurf hoert sie am Ende des laufenden Worts auf (plus so viele
+# weitere Woerter; 0 = sofort an der Wortgrenze). Frueher 3 Woerter oder Satzende: bis 2,5 s Ueberlappung.
+SOFT_INTERRUPT_MAX_WORDS = int(os.getenv("SOFT_INTERRUPT_MAX_WORDS") or 0)
 # So weit laufen die Wort-Zeitstempel dem hoerbaren Ton voraus (gemessen: ~0,5 s).
 SOFT_INTERRUPT_LAG_SECS = float(os.getenv("SOFT_INTERRUPT_LAG_SECS") or 0.5)
 
