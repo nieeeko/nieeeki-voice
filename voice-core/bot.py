@@ -65,6 +65,7 @@ from memory import MemoryStore
 from persona import build_system_prompt, greeting_for
 from activity import ActivityReporter
 from auth_gate import allow_preview_origins, install_owner_gate
+from session_guard import SingleSession
 from audio_monitor import AudioInputMonitor, SpeakerTracker
 from learning import learn_from_session
 from dev_agent import DevAgent
@@ -429,9 +430,17 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     await runner.run(task)
 
 
+session = SingleSession()  # nur ein Gespraech gleichzeitig (session_guard.py)
+
+
 async def bot(runner_args: RunnerArguments):
-    transport = await create_transport(runner_args, transport_params)
-    await run_bot(transport, runner_args)
+    connection = getattr(runner_args, "webrtc_connection", None)
+    await session.take(connection)
+    try:
+        transport = await create_transport(runner_args, transport_params)
+        await run_bot(transport, runner_args)
+    finally:
+        session.release(connection)
 
 
 if __name__ == "__main__":

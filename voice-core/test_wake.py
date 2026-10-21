@@ -57,6 +57,25 @@ class FortlaufendeMerkmaleTests(unittest.TestCase):
         self.assertEqual(first, 24)  # 76 Mel-Zeilen nach 10 Bloecken, dann 16 Embeddings: 25 x 80 ms
 
 
+class SchwelleTests(unittest.TestCase):
+    def test_begleitdatei_und_ersatzwert(self):
+        import tempfile
+
+        d = Path(tempfile.mkdtemp())
+        model = d / "m.onnx"
+        self.assertEqual(wake.model_threshold(model), 0.5)  # keine Begleitdatei
+        for content, expected in [('{"schwelle": 0.8}', 0.8), ('{"schwelle": 2}', 0.5), ('{"schwelle": "hoch"}', 0.5),
+                                  ("kein json", 0.5), ("[0.8]", 0.5), ('{"anders": 1}', 0.5)]:
+            with self.subTest(content=content):
+                (d / "m.json").write_text(content, encoding="utf-8")
+                self.assertEqual(wake.model_threshold(model), expected)
+
+    def test_mitgeliefertes_modell(self):
+        model = Path(wake.__file__).parent / "models" / "nieeeki.onnx"
+        self.assertTrue(model.is_file())
+        self.assertEqual(wake.model_threshold(model), 0.8)
+
+
 class ProtokollTests(unittest.TestCase):
     def test_ohne_modell_dauerhafter_abbruch(self):
         out = io.StringIO()

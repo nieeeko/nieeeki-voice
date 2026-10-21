@@ -43,7 +43,10 @@ export function Canvas({ items }: { items: CanvasItem[] }) {
           <span className="canvas-kind">{KIND_LABEL[item.kind]}</span>
           <h2>{item.title}</h2>
         </header>
-        <CanvasBody item={item} />
+        {/* fuellt die freie Flaeche, Inhalt mittig (globals.css) */}
+        <div className="canvas-item-body" data-kind={item.kind}>
+          <CanvasBody item={item} />
+        </div>
       </article>
     </div>
   );

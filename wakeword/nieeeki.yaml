@@ -61,9 +61,11 @@ steps: 50000
 learning_rate: 0.0001
 weight_decay: 0.01
 label_smoothing: 0.05
-max_negative_weight: 3000
-# Ziel: hoechstens ein Fehlalarm in fuenf Stunden Gerede/Geraeusch (Validierung mit ACAV100M)
-target_fp_per_hour: 0.2
+# Mit Gegenbeispielen am Fensterende (augment_negatives.py) sind sie schwer: 3000 machte das Modell
+# uebervorsichtig (Erkennung 62 %). 500 und keine Verdopplung (Ziel 1,0; die Validierung zaehlt die
+# schweren Gegenbeispiele mit, die im Alltag selten sind). Massstab ist der Gleitfenster-Test.
+max_negative_weight: 500
+target_fp_per_hour: 1.0
 
 batch_n_per_class:
   positive: 50

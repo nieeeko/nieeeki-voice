@@ -149,13 +149,33 @@ def foreground() -> dict:
 
 
 def focus(hwnd: int) -> None:
+    """Fenster nach vorn holen, ohne den Fokus darin zu verschieben.
+
+    Frueher loeste ein kurzer Alt-Druck die Fokussperre von Windows. War das Fenster schon vorn
+    (Chrome nach einem Klick ins Suchfeld), bekam Chrome dieses Alt: der Tastaturfokus sprang ins
+    Chrome-Menue, das Feld verlor ihn, und getippter Text ging verloren (Log 20.10., GitHub-Formular).
+    """
     win32gui, _, win32con = _win32()
     if win32gui.IsIconic(hwnd):
         win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-    # Windows erlaubt SetForegroundWindow nur nach einer Eingabe; ein Alt-Druck loest die Sperre
-    ctypes.windll.user32.keybd_event(0x12, 0, 0, 0)
-    ctypes.windll.user32.keybd_event(0x12, 0, 2, 0)
-    win32gui.SetForegroundWindow(hwnd)
+    elif win32gui.GetForegroundWindow() == hwnd:
+        return  # schon vorn: nichts druecken, das angeklickte Feld behaelt den Fokus
+    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    # Mit der Eingabewarteschlange des Fensters vorne verbunden darf SetForegroundWindow ohne Tastendruck
+    front_thread = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
+    own_thread = kernel32.GetCurrentThreadId()
+    attached = bool(front_thread) and front_thread != own_thread and user32.AttachThreadInput(own_thread, front_thread, True)
+    try:
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+    finally:
+        if attached:
+            user32.AttachThreadInput(own_thread, front_thread, False)
+    if user32.GetForegroundWindow() != hwnd:
+        # Notfall: eine eigene Eingabe loest die Sperre. Shift statt Alt: Shift allein oeffnet kein Menue.
+        user32.keybd_event(0x10, 0, 0, 0)
+        user32.keybd_event(0x10, 0, 2, 0)
+        win32gui.SetForegroundWindow(hwnd)
     time.sleep(0.25)
 
 

@@ -123,7 +123,8 @@ body {
 .fine { margin: -8px 0 0; font-size: 14px; color: var(--ink-soft); text-align: center; }
 
 /* ---------- Canvas ---------- */
-.canvas { padding: 40px; display: flex; }
+/* Canvas nutzt die ganze freie Flaeche rechts (mindestens Bildschirmhoehe), Inhalt mittig statt oben */
+.canvas { padding: 32px; display: flex; flex-direction: column; min-height: var(--safe-height); }
 .canvas-empty { margin: auto; max-width: 560px; }
 .canvas-empty h2 {
   margin: 0 0 8px;
@@ -165,7 +166,7 @@ body {
   letter-spacing: 0.04em; text-transform: uppercase; vertical-align: 2px;
 }
 
-.canvas-board { width: 100%; display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.canvas-board { flex: 1; width: 100%; display: flex; flex-direction: column; gap: 20px; min-width: 0; min-height: 0; }
 .canvas-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
 .canvas-tab {
   appearance: none; border: 1px solid var(--rule); background: transparent; color: var(--ink-soft);
@@ -173,7 +174,15 @@ body {
   max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .canvas-tab[aria-current="true"] { border-color: var(--voice-bot); color: var(--ink); }
-.canvas-item { background: var(--panel); border-radius: 14px; padding: 28px; min-width: 0; }
+.canvas-item {
+  flex: 1; display: flex; flex-direction: column;
+  background: var(--panel); border-radius: 14px; padding: 28px; min-width: 0; min-height: 0;
+}
+.canvas-item-body { flex: 1; display: flex; flex-direction: column; align-items: center; min-height: 0; overflow: auto; }
+/* mittig per margin auto statt justify-content: bei Ueberlaenge bleibt der Anfang erreichbar */
+.canvas-item-body > * { width: 100%; margin-block: auto; }  /* Tabellen und Code: volle Breite */
+.canvas-item-body[data-kind="dokument"] > * { max-width: 72ch; }  /* Text bleibt lesbar */
+.canvas-item-body[data-kind="mermaid"] > .canvas-mermaid { flex: 1; display: flex; align-items: center; justify-content: center; }
 .canvas-item-head { margin-bottom: 18px; }
 .canvas-item-head h2 {
   margin: 4px 0 0; font-family: var(--font-display), sans-serif; font-weight: 600;
@@ -211,7 +220,7 @@ body {
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; }
   .presence { border-right: 0; border-bottom: 1px solid var(--rule); padding: 28px 16px; }
-  .canvas { padding: 28px 16px; }
+  .canvas { padding: 28px 16px; min-height: auto; }
   .kinds { grid-template-columns: 1fr; }
   .wordmark { font-size: 44px; }
 }
@@ -347,6 +356,8 @@ body {
   font: 600 24px ui-monospace, "Cascadia Code", Consolas, monospace; letter-spacing: 0.3em; text-align: center;
 }
 .gate-form .wake { margin-top: 6px; }
+.gate-form .gate-check { flex-direction: row; align-items: center; gap: 10px; color: var(--ink); cursor: pointer; }
+.gate-form .gate-check input { width: 20px; height: 20px; margin: 0; padding: 0; accent-color: var(--focus); cursor: pointer; }
 .gate-qr { align-self: center; border-radius: 12px; background: #fff; padding: 10px; }
 .gate-secret { font-size: 14px; color: var(--ink-soft); }
 .gate-secret code { display: block; margin-top: 6px; font: 13px ui-monospace, "Cascadia Code", Consolas, monospace; word-break: break-all; }

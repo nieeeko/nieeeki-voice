@@ -358,5 +358,46 @@ class LockTests(unittest.TestCase):
         self.assertFalse(host.wc.is_locked())
 
 
+class FocusTests(unittest.TestCase):
+    """focus() darf den Fokus im Fenster nicht verschieben (Log 20.10.: Alt nahm dem Chrome-Feld den Fokus)."""
+
+    def run_focus(self, hwnd, front_before, front_after=None):
+        gui = mock.Mock()
+        gui.IsIconic.return_value = False
+        gui.GetForegroundWindow.return_value = front_before
+        user32 = mock.Mock()
+        user32.GetForegroundWindow.side_effect = [front_before, front_after if front_after is not None else hwnd]
+        user32.GetWindowThreadProcessId.return_value = 7
+        user32.AttachThreadInput.return_value = 1
+        kernel32 = mock.Mock()
+        kernel32.GetCurrentThreadId.return_value = 3
+        fake_ctypes = mock.Mock()
+        fake_ctypes.windll.user32, fake_ctypes.windll.kernel32 = user32, kernel32
+        with mock.patch.object(host.wc, "_win32", return_value=(gui, None, mock.Mock())), \
+                mock.patch.object(host.wc, "ctypes", fake_ctypes), mock.patch.object(host.wc.time, "sleep"):
+            host.wc.focus(hwnd)
+        return gui, user32
+
+    def keys(self, user32):
+        return [c.args[0] for c in user32.keybd_event.call_args_list]
+
+    def test_schon_vorn_kein_tastendruck(self):
+        gui, user32 = self.run_focus(42, front_before=42)
+        self.assertEqual(self.keys(user32), [])
+        user32.SetForegroundWindow.assert_not_called()
+        gui.SetForegroundWindow.assert_not_called()
+
+    def test_wechsel_ohne_tastendruck(self):
+        _, user32 = self.run_focus(42, front_before=99)
+        user32.SetForegroundWindow.assert_called_once_with(42)
+        self.assertEqual(self.keys(user32), [])
+        self.assertEqual(user32.AttachThreadInput.call_args_list[-1].args, (3, 7, False))  # wieder geloest
+
+    def test_notfall_mit_shift_nie_alt(self):
+        _, user32 = self.run_focus(42, front_before=99, front_after=99)
+        self.assertNotIn(0x12, self.keys(user32))
+        self.assertEqual(self.keys(user32), [0x10, 0x10])
+
+
 if __name__ == "__main__":
     unittest.main()

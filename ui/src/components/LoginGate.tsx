@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { getSupabase } from "@/lib/supabase";
+import { getSupabase, loginTime, maxLoginAgeMs, rememberChosen, setRememberLogin } from "@/lib/supabase";
 
 /**
  * Zugang zu nieeeki: E-Mail und Passwort, danach der Code aus der Authenticator-App (aal2).
@@ -33,6 +33,22 @@ export function qrDataUrl(raw: string) {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
+/** "1 Woche" in der Desktop-App, sonst "1 Tag" (nur im Browser aufrufen). */
+function maxAgeLabel() {
+  return maxLoginAgeMs() > 24 * 3600 * 1000 ? "1 Woche" : "1 Tag";
+}
+
+/** Anmeldung zu alt (Desktop 1 Woche, Web 1 Tag)? Dann abmelden; true = abgemeldet. */
+async function signOutIfExpired(): Promise<boolean> {
+  const supabase = getSupabase();
+  const { data } = (await supabase?.auth.getSession()) ?? { data: { session: null } };
+  if (!supabase || !data.session) return false;
+  const since = loginTime(data.session);
+  if (since !== null && Date.now() - since <= maxLoginAgeMs()) return false;
+  await supabase.auth.signOut();
+  return true;
+}
+
 function CodeField() {
   return (
     <label>
@@ -61,6 +77,10 @@ export function LoginGate({ children }: { children: (signOut: () => void) => Rea
     if (!supabase) return setStep({ kind: "fehlt" });
     const { data: sessionData } = await supabase.auth.getSession();
     if (!sessionData.session) return setStep({ kind: "anmelden" });
+    if (await signOutIfExpired()) {
+      setError(`Deine Anmeldung ist abgelaufen (nach ${maxAgeLabel()}). Bitte neu anmelden.`);
+      return setStep({ kind: "anmelden" });
+    }
 
     const { data: aal, error: aalError } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
     if (aalError) {
@@ -111,6 +131,18 @@ export function LoginGate({ children }: { children: (signOut: () => void) => Rea
     return () => data.subscription.unsubscribe();
   }, [nextStep]);
 
+  // Auch bei offener Seite: nach 1 Tag (Web) bzw. 1 Woche (Desktop) automatisch abmelden
+  const signedIn = step.kind === "fertig";
+  useEffect(() => {
+    if (!signedIn) return;
+    const id = setInterval(() => {
+      void signOutIfExpired().then((out) => {
+        if (out) setError(`Deine Anmeldung ist abgelaufen (nach ${maxAgeLabel()}). Bitte neu anmelden.`);
+      });
+    }, 60_000);
+    return () => clearInterval(id);
+  }, [signedIn]);
+
   const run = async (action: () => Promise<string | null>) => {
     setBusy(true);
     setError(null);
@@ -126,6 +158,8 @@ export function LoginGate({ children }: { children: (signOut: () => void) => Rea
   const signIn = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
+    // vor dem Anmelden festlegen: davon haengt ab, wohin supabase-js die Sitzung schreibt
+    setRememberLogin(form.get("bleiben") === "on");
     void run(async () => {
       const { error } = await getSupabase()!.auth.signInWithPassword({
         email: String(form.get("email")).trim(),
@@ -182,6 +216,15 @@ export function LoginGate({ children }: { children: (signOut: () => void) => Rea
             <label>
               Passwort
               <input name="password" type="password" autoComplete="current-password" required />
+            </label>
+            {/* Nur im Browser gerendert (Schritt "anmelden" gibt es erst nach dem Laden) */}
+            <label className="gate-check">
+              <input
+                name="bleiben"
+                type="checkbox"
+                defaultChecked={Boolean(window.nieeekiDesktop?.isDesktop) || rememberChosen()}
+              />
+              Angemeldet bleiben ({maxAgeLabel()})
             </label>
             <button className="wake" disabled={busy}>
               {busy ? "Prüfe …" : "Anmelden"}
