@@ -92,7 +92,7 @@ if sys.platform == "win32":
 # Standard: EU-Endpunkte (Datenschutz); .env kann auf US umstellen
 SONIOX_STT_URL = os.getenv("SONIOX_STT_URL", "wss://stt-rt.eu.soniox.com/transcribe-websocket")
 SONIOX_TTS_URL = os.getenv("SONIOX_TTS_URL", "wss://tts-rt.soniox.com/tts-websocket")
-SONIOX_VOICE = os.getenv("SONIOX_VOICE", "Nina")  # spaeter: UUID der geklonten Stimme
+SONIOX_VOICE = os.getenv("SONIOX_VOICE", "Lena")  # deutsche Muttersprachlerin; spaeter UUID der geklonten Stimme
 # Tempo 0,7..1,3 und kuerzere Pausen; ohne Eintrag Soniox-Standard (siehe soniox_tts.voice_tuning)
 SONIOX_TUNING = voice_tuning(os.getenv("SONIOX_SPEED"), os.getenv("SONIOX_REDUCE_SILENCE"))
 # Fachbegriffe fuer die Spracherkennung: Programme und Befehle, die Nikolaj oft sagt. Am 18.10. kam
