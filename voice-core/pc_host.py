@@ -37,6 +37,7 @@ CONNECT_TIMEOUT_SECS = 20
 LLM_TOOLS = [
     "webseite_oeffnen", "programm_oeffnen", "powershell_lesen", "system_info", "dark_mode",
     "fenster_auflisten", "fenster_fokussieren", "tastatur_tippen", "tasten_druecken", "maus_scrollen", "oeffnen_mit",
+    "ordner_anlegen", "github_repo_anlegen", "git_klonen",
     "als_admin",  # schlaegt nur vor: ausgefuehrt wird erst nach Freigabe oder per Erlaubnisliste
 ]
 MAX_TOKEN_LEN = 4096

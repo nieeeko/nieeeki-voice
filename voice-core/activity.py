@@ -19,7 +19,7 @@ DETAIL_KEYS = {
     "fenster_fokussieren": "fenster", "tasten_druecken": "kombination", "websuche": "anfrage",
     "canvas_zeigen": "titel", "auf_bildschirm_klicken": "ziel", "bildschirm_ansehen": "frage",
     "merken": "art", "entwicklung_vorbereiten": "projekt", "maus_scrollen": "richtung",
-    "als_admin": "aktion",
+    "als_admin": "aktion", "ordner_anlegen": "pfad", "github_repo_anlegen": "name", "git_klonen": "repo",
 }
 
 

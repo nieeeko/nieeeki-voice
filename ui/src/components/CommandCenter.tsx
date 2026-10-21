@@ -76,6 +76,9 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
     screenTrack,
     sendText,
     toggleScreen,
+    screenMonitor,
+    screenMonitors,
+    chooseMonitor,
     clickScreen,
     scrollScreen,
     typeOnScreen,
@@ -241,6 +244,7 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
           <ScreenView
             track={screenTrack}
             control={{ tap: clickScreen, scroll: scrollScreen, type: typeOnScreen, key: pressOnScreen }}
+            monitors={{ count: screenMonitors, current: screenMonitor, choose: chooseMonitor }}
           />
         )}
       </main>

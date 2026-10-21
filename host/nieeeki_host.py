@@ -7,7 +7,8 @@ Werkzeuge per MCP. Zwei Betriebsarten:
 Sicherheitsmodell (wird HIER erzwungen, nicht im Prompt). Alles, was ein Modell schickt, ist
 untrusted: auch Text aus Websuche, Mails oder Dateien kann im Modell als Anweisung wirken.
   read      sofort                (system_info, powershell_lesen mit reinen Get-/Test-Befehlen)
-  change    sofort, protokolliert (webseite_oeffnen, programm_oeffnen, dark_mode)
+  change    sofort, protokolliert (webseite_oeffnen, programm_oeffnen, dark_mode, ordner_anlegen im
+            Benutzerordner, github_repo_anlegen im eigenen Konto und privat, git_klonen nach Projekte)
   critical  nur Freigabe-Anfrage; ausgefuehrt erst nach Bestaetigung durch Nikolaj in der UI
   admin     als_admin: nur ueber den Admin-Helfer (voice-core/admin_helper.py, laeuft erhoeht). Der
             fuehrt nur aus, was auf Nikolajs Erlaubnisliste steht oder was er per Klick freigibt;
@@ -183,13 +184,23 @@ def _launch(target: str, args: list[str] | None = None) -> None:
     subprocess.Popen([target, *(args or [])], close_fds=True)
 
 
+# Lesen muss schnell gehen: der Host arbeitet Aufrufe nacheinander ab. Am 21.10. blockierte eine
+# Suche ueber ganz C:\ den Host 60 s, die folgenden Aufrufe warteten und wurden abgebrochen.
+READ_TIMEOUT_SECS = 20
+
+
 def _powershell(command: str, timeout: int = 60) -> dict:
     if platform.system() != "Windows":
         return {"status": "error", "summary": "Host laeuft nicht unter Windows"}
-    p = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
-        capture_output=True, text=True, timeout=timeout,
-    )
+    try:
+        p = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "timeout", "summary": f"Nach {timeout} s abgebrochen. Nicht wiederholen: enger "
+                "eingrenzen (z. B. nur im Benutzerordner, ohne -Recurse ueber ganze Laufwerke) oder "
+                "Nikolaj nach dem Pfad fragen."}
     return {
         "status": "success" if p.returncode == 0 else "error",
         "exit_code": p.returncode,
@@ -284,6 +295,152 @@ def oeffnen_mit(pfad: str, programm: str = "vscode") -> dict:
     _audit({"tool": "oeffnen_mit", "pfad": str(path), "programm": app_name, "risk": "change"})
     _launch(exe, [str(path)])  # argv, keine Shell
     return {"status": "success", "summary": f"{path.name} in {app_name} geoeffnet"}
+
+
+# ---------- Ordner und GitHub: eigene Werkzeuge statt Klicken und PowerShell-Freigaben ----------
+# 21.10.: Ein Repository per Klick auf github.com/new anzulegen dauerte Minuten (Bildmodell je Klick,
+# Text landete neben dem Feld, die Adresse zum Klonen fehlte), und jeder neue Ordner brauchte eine
+# Freigabe. Beides ist harmlos und umkehrbar, darum "change": sofort, mit Audit-Eintrag.
+PROJECTS = Path(os.getenv("NIEEEKI_PROJECTS_DIR") or HOME / "Projekte").resolve()
+NO_CREATE_PARTS = {"appdata"}  # Programmdaten und Autostart: dort legt nieeeki nichts an
+REPO_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
+GITHUB_REPO = re.compile(r"^(?:https://github\.com/)?([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))/([A-Za-z0-9._-]{1,100}?)(?:\.git)?/?$")
+GIT_TIMEOUT_SECS = 90
+
+
+def validate_new_folder(pfad: object) -> Path:
+    """Neuer Ordner nur im eigenen Benutzerordner, nicht in AppData, versteckten oder Zugangsdaten-Ordnern."""
+    if not isinstance(pfad, str) or not pfad.strip() or len(pfad) > 400:
+        raise ValueError("Pfad fehlt")
+    path = Path(pfad.strip().strip('"')).expanduser()
+    if not path.is_absolute():
+        raise ValueError(f"Bitte den vollen Pfad, z. B. {PROJECTS / 'neues-projekt'}")
+    path = path.resolve()
+    if path == HOME or not path.is_relative_to(HOME):
+        raise ValueError(f"Nur Ordner unter {HOME}")
+    parts = [p.lower() for p in path.relative_to(HOME).parts]
+    if set(parts) & (SENSITIVE_PARTS | NO_CREATE_PARTS) or any(p.startswith(".") for p in parts):
+        raise ValueError("Dort legt nieeeki keine Ordner an")
+    if path.exists() and not path.is_dir():
+        raise ValueError(f"{path.name} ist eine Datei, kein Ordner")
+    return path
+
+
+def validate_repo_name(name: object) -> str:
+    if not isinstance(name, str) or not REPO_NAME.fullmatch(name.strip()) or name.strip().lower().endswith(".git"):
+        raise ValueError("Repository-Name: Buchstaben, Ziffern, Punkt, Minus oder Unterstrich, hoechstens 100 Zeichen")
+    return name.strip()
+
+
+def validate_github_repo(repo: object) -> tuple[str, str]:
+    """besitzer/name oder https://github.com/besitzer/name(.git) -> (besitzer, name)."""
+    m = GITHUB_REPO.fullmatch(repo.strip()) if isinstance(repo, str) else None
+    if not m:
+        raise ValueError("Repository als besitzer/name oder https://github.com/besitzer/name")
+    return m.group(1), validate_repo_name(m.group(2))
+
+
+def _gh() -> str:
+    exe = shutil.which("gh") or r"C:\Program Files\GitHub CLI\gh.exe"
+    if not Path(exe).is_file():
+        raise RuntimeError("Die GitHub-Kommandozeile (gh) ist auf dem Laptop nicht installiert")
+    return exe
+
+
+def _run(args: list[str], timeout: int = GIT_TIMEOUT_SECS) -> subprocess.CompletedProcess:
+    # argv-Liste, keine Shell: Name und Beschreibung werden nie als Befehl gelesen
+    return subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
+
+
+def _clone(gh: str, owner: str, name: str) -> dict:
+    """Nach Projekte\\<name> klonen; ein leerer Ordner dort ist in Ordnung, einer mit Inhalt nicht."""
+    target = PROJECTS / name
+    if target.exists() and (not target.is_dir() or any(target.iterdir())):
+        return {"status": "rejected", "summary": f"Im Projekte-Ordner liegt schon {name} mit Inhalt; nichts ueberschrieben",
+                "ordner": str(target)}
+    PROJECTS.mkdir(parents=True, exist_ok=True)
+    p = _run([gh, "repo", "clone", f"{owner}/{name}", str(target)])
+    if p.returncode != 0:
+        return {"status": "error", "summary": "Klonen hat nicht geklappt", "detail": _clean(p.stderr, 800)}
+    return {"status": "success", "summary": f"{owner}/{name} liegt jetzt in Projekte\\{name}", "ordner": str(target)}
+
+
+@mcp.tool()
+def ordner_anlegen(pfad: str) -> dict:
+    """Legt einen Ordner an (change, ohne Freigabe), z. B. im Projekte-Ordner. Nur im eigenen
+    Benutzerordner, nie in AppData. Gibt es ihn schon, passiert nichts. Statt New-Item per PowerShell."""
+    try:
+        path = validate_new_folder(pfad)
+    except ValueError as e:
+        _audit({"tool": "ordner_anlegen", "pfad": str(pfad)[:200], "risk": "rejected", "error": str(e)})
+        return {"status": "rejected", "summary": str(e)}
+    if path.is_dir():
+        return {"status": "success", "summary": f"Den Ordner {path.name} gibt es schon", "pfad": str(path)}
+    _audit({"tool": "ordner_anlegen", "pfad": str(path), "risk": "change"})
+    path.mkdir(parents=True)
+    return {"status": "success", "summary": f"Ordner {path.name} angelegt", "pfad": str(path)}
+
+
+@mcp.tool()
+def github_repo_anlegen(name: str, privat: bool = True, beschreibung: str = "") -> dict:
+    """Legt ein neues GitHub-Repository in Nikolajs Konto an (change, privat, ausser er will es
+    oeffentlich) und klont es gleich nach Projekte\\<name>. Der richtige Weg statt github.com/new im
+    Browser. Gibt Adresse und Ordner zurueck; gibt es das Repository schon, wird nur geklont."""
+    try:
+        name = validate_repo_name(name)
+        gh = _gh()
+    except (ValueError, RuntimeError) as e:
+        _audit({"tool": "github_repo_anlegen", "name": str(name)[:100], "risk": "rejected", "error": str(e)})
+        return {"status": "rejected", "summary": str(e)}
+    desc = _CONTROL_CHARS.sub("", str(beschreibung or ""))[:200]
+    if dup := _duplicate("github_repo_anlegen", name=name):
+        return dup
+    _audit({"tool": "github_repo_anlegen", "name": name, "privat": bool(privat), "risk": "change"})
+    try:
+        login = _run([gh, "api", "user", "--jq", ".login"], timeout=20)
+        owner = login.stdout.strip()
+        if login.returncode != 0 or not owner:
+            return {"status": "error", "summary": "GitHub-Anmeldung fehlt: am Laptop einmal 'gh auth login'"}
+        known = _run([gh, "repo", "view", f"{owner}/{name}", "--json", "visibility", "--jq", ".visibility"], timeout=20)
+        created = known.returncode != 0
+        if created:
+            args = [gh, "repo", "create", f"{owner}/{name}", "--private" if privat else "--public"]
+            if desc:
+                args += ["--description", desc]
+            made = _run(args)
+            if made.returncode != 0:
+                return {"status": "error", "summary": "GitHub hat das Repository nicht angelegt",
+                        "detail": _clean(made.stderr, 800)}
+        result = _clone(gh, owner, name)
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "summary": "GitHub antwortet nicht (Zeitueberschreitung)"}
+    result["url"] = f"https://github.com/{owner}/{name}"
+    result["angelegt"] = created
+    if not created:
+        result["hinweis"] = f"Das Repository gab es schon ({known.stdout.strip().lower() or 'unbekannt'}), es wurde nur geklont."
+    return result
+
+
+@mcp.tool()
+def git_klonen(repo: str) -> dict:
+    """Klont ein GitHub-Repository in den Projekte-Ordner (change): repo = besitzer/name oder
+    https://github.com/besitzer/name. Ziel ist immer Projekte\\<name>. Danach mit oeffnen_mit in
+    VS Code oeffnen."""
+    try:
+        owner, name = validate_github_repo(repo)
+        gh = _gh()
+    except (ValueError, RuntimeError) as e:
+        _audit({"tool": "git_klonen", "repo": str(repo)[:200], "risk": "rejected", "error": str(e)})
+        return {"status": "rejected", "summary": str(e)}
+    if dup := _duplicate("git_klonen", repo=f"{owner}/{name}"):
+        return dup
+    _audit({"tool": "git_klonen", "repo": f"{owner}/{name}", "risk": "change"})
+    try:
+        result = _clone(gh, owner, name)
+    except subprocess.TimeoutExpired:
+        return {"status": "error", "summary": "Klonen dauerte zu lange und wurde abgebrochen"}
+    result["url"] = f"https://github.com/{owner}/{name}"
+    return result
 
 
 @mcp.tool()
@@ -399,7 +556,7 @@ def powershell_lesen(command: str, reason: str) -> dict:
             "summary": "Das veraendert etwas am PC. Nikolaj muss es in der Oberflaeche freigeben; "
             "bis dahin passiert nichts.",
         }
-    result = _powershell(command)
+    result = _powershell(command, timeout=READ_TIMEOUT_SECS)
     _audit({"tool": "powershell_lesen", "result": result["status"]})
     return result
 

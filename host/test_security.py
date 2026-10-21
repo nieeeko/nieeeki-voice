@@ -399,5 +399,137 @@ class FocusTests(unittest.TestCase):
         self.assertEqual(self.keys(user32), [0x10, 0x10])
 
 
+class ClaudeAppTests(unittest.TestCase):
+    def test_claude_code_findet_desktop_app(self):
+        # 21.10.: programm_oeffnen("Claude Code") fand die App "Claude" nicht
+        apps = [{"Name": "Claude", "AppID": "Claude_x!Claude"}, {"Name": "Visual Studio Code", "AppID": "code"}]
+        self.assertEqual(host.wc.pick_start_app("Claude Code", apps)["AppID"], "Claude_x!Claude")
+        self.assertEqual(host.wc.pick_start_app("claude", apps)["AppID"], "Claude_x!Claude")
+        with self.assertRaises(ValueError):  # nur ganze Woerter am Anfang
+            host.wc.pick_start_app("code claude", [{"Name": "Claude", "AppID": "c"}])
+
+
+class FolderTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        self.home = Path(tempfile.mkdtemp()).resolve()
+        (self.home / "Projekte").mkdir()
+        patches = [mock.patch.object(host, "HOME", self.home), mock.patch.object(host, "PROJECTS", self.home / "Projekte")]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_anlegen_ohne_freigabe_und_wiederholbar(self):
+        target = self.home / "Projekte" / "Test"
+        first = host.ordner_anlegen(str(target))
+        second = host.ordner_anlegen(str(target))
+        self.assertEqual((first["status"], second["status"]), ("success", "success"))
+        self.assertTrue(target.is_dir())
+        self.assertIn("gibt es schon", second["summary"])
+
+    def test_nur_im_benutzerordner(self):
+        bad = [
+            "Projekte\\relativ", str(self.home), str(self.home.parent / "fremd"), "C:\\Windows\\neu",
+            str(self.home / "AppData" / "Roaming" / "x"), str(self.home / ".ssh" / "x"),
+            str(self.home / ".config" / "x"), "",
+        ]
+        for pfad in bad:
+            with self.subTest(pfad=pfad):
+                self.assertEqual(host.ordner_anlegen(pfad)["status"], "rejected")
+        self.assertFalse((self.home / "AppData").exists())
+
+
+class GithubTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        self.projects = Path(tempfile.mkdtemp()).resolve()
+        for p in [mock.patch.object(host, "PROJECTS", self.projects), mock.patch.object(host, "_gh", return_value="gh.exe")]:
+            p.start()
+            self.addCleanup(p.stop)
+        host._recent_actions.clear()
+
+    @staticmethod
+    def proc(code=0, out=""):
+        return mock.Mock(returncode=code, stdout=out, stderr="")
+
+    def test_namen_und_adressen(self):
+        self.assertEqual(host.validate_github_repo("https://github.com/nieeeko/Test.git"), ("nieeeko", "Test"))
+        self.assertEqual(host.validate_github_repo("nieeeko/radar"), ("nieeeko", "radar"))
+        for bad in ["Test", "https://evil.com/a/b", "a/b/c", "nieeeko/..", "nieeeko/-x;rm", "", None]:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                host.validate_github_repo(bad)
+        for bad in ["", ".hidden", "a b", "x" * 101, "name.git", "--help"]:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                host.validate_repo_name(bad)
+
+    def test_neu_anlegen_privat_und_klonen(self):
+        calls = []
+
+        def run(args, timeout=90):
+            calls.append(args)
+            if args[1:3] == ["api", "user"]:
+                return self.proc(out="nieeeko\n")
+            if args[1:3] == ["repo", "view"]:
+                return self.proc(code=1)
+            return self.proc()
+
+        with mock.patch.object(host, "_run", side_effect=run):
+            result = host.github_repo_anlegen("Test", beschreibung="Spielwiese")
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["url"], "https://github.com/nieeeko/Test")
+        self.assertTrue(result["angelegt"])
+        create = next(c for c in calls if c[1:3] == ["repo", "create"])
+        self.assertEqual(create, ["gh.exe", "repo", "create", "nieeeko/Test", "--private", "--description", "Spielwiese"])
+        clone = next(c for c in calls if c[1:3] == ["repo", "clone"])
+        self.assertEqual(clone, ["gh.exe", "repo", "clone", "nieeeko/Test", str(self.projects / "Test")])
+
+    def test_vorhandenes_wird_nur_geklont(self):
+        calls = []
+
+        def run(args, timeout=90):
+            calls.append(args)
+            if args[1:3] == ["api", "user"]:
+                return self.proc(out="nieeeko")
+            if args[1:3] == ["repo", "view"]:
+                return self.proc(out="PUBLIC")
+            return self.proc()
+
+        with mock.patch.object(host, "_run", side_effect=run):
+            result = host.github_repo_anlegen("Test")
+        self.assertFalse(result["angelegt"])
+        self.assertIn("public", result["hinweis"])
+        self.assertFalse(any(c[1:3] == ["repo", "create"] for c in calls))
+
+    def test_klonen_ueberschreibt_nichts(self):
+        (self.projects / "radar").mkdir()
+        (self.projects / "radar" / "README.md").write_text("da", encoding="utf-8")
+        with mock.patch.object(host, "_run") as run:
+            result = host.git_klonen("nieeeko/radar")
+        run.assert_not_called()
+        self.assertEqual(result["status"], "rejected")
+
+    def test_leerer_ordner_ist_ok(self):
+        (self.projects / "Test").mkdir()
+        with mock.patch.object(host, "_run", return_value=self.proc()) as run:
+            result = host.git_klonen("https://github.com/nieeeko/Test")
+        self.assertEqual(result["status"], "success")
+        run.assert_called_once()
+
+
+class ReadTimeoutTests(unittest.TestCase):
+    def test_lange_suche_wird_klar_gemeldet(self):
+        import subprocess
+
+        with mock.patch.object(host.platform, "system", return_value="Windows"), \
+             mock.patch.object(host.subprocess, "run", side_effect=subprocess.TimeoutExpired("powershell", 20)):
+            result = host.powershell_lesen("Get-ChildItem -Path C:\\ -Recurse", "Suche")
+        self.assertEqual(result["status"], "timeout")
+        self.assertIn("Nicht wiederholen", result["summary"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -37,7 +37,18 @@ function relative(video: HTMLVideoElement, clientX: number, clientY: number) {
   return { x: (clientX - box.left) / box.width, y: (clientY - box.top) / box.height };
 }
 
-export function ScreenView({ track, control }: { track: MediaStreamTrack | null; control: ScreenControl }) {
+/** Monitorwahl: 0 = automatisch (der mit dem Fenster vorne), 1..count von links nach rechts. */
+export type MonitorChoice = { count: number; current: number; choose: (monitor: number) => void };
+
+export function ScreenView({
+  track,
+  control,
+  monitors,
+}: {
+  track: MediaStreamTrack | null;
+  control: ScreenControl;
+  monitors?: MonitorChoice;
+}) {
   const ref = useRef<HTMLVideoElement>(null);
   const press = useRef<Press | null>(null);
   const wheelAt = useRef(0);
@@ -151,6 +162,29 @@ export function ScreenView({ track, control }: { track: MediaStreamTrack | null;
 
   return (
     <section className="screen" aria-label="Laptop-Bildschirm live">
+      {monitors && monitors.count > 1 && (
+        <div className="screen-monitors" role="group" aria-label="Welcher Bildschirm">
+          <button
+            type="button"
+            aria-pressed={monitors.current === 0}
+            title="Der Bildschirm mit dem Fenster vorne"
+            onClick={() => monitors.choose(0)}
+          >
+            Automatisch
+          </button>
+          {Array.from({ length: monitors.count }, (_, i) => i + 1).map((n) => (
+            <button
+              key={n}
+              type="button"
+              aria-pressed={monitors.current === n}
+              aria-label={`Bildschirm ${n} von links`}
+              onClick={() => monitors.choose(n)}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="screen-stage" data-control={steering}>
         <video
           ref={ref}

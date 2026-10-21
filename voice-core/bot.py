@@ -62,7 +62,7 @@ from pipecat.transports.base_transport import TransportParams
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from memory import MemoryStore
-from persona import build_system_prompt, greeting_for
+from persona import build_system_prompt, greeting_for, pc_section
 from activity import ActivityReporter
 from auth_gate import allow_preview_origins, install_owner_gate
 from session_guard import SingleSession
@@ -210,7 +210,8 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         settings=SonioxTTSService.Settings(voice=SONIOX_VOICE, language=Language.DE, **SONIOX_TUNING),
     )
 
-    system_prompt = build_system_prompt(await cached_profile(memory))
+    pc = pc_section()  # Benutzer- und Projekte-Ordner, je Gespraech frisch (persona.pc_section)
+    system_prompt = build_system_prompt(await cached_profile(memory), pc)
 
     llm = AnthropicLLMService(
         api_key=os.environ["ANTHROPIC_API_KEY"],
@@ -340,6 +341,9 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         if msg.type == "bildschirm":
             await streamer.set_active(bool((msg.data or {}).get("an")), "Knopf")
             return
+        if msg.type == "bildschirm_monitor":  # welcher der Monitore im Live-Bild (0 = automatisch)
+            await streamer.set_monitor((msg.data or {}).get("monitor"))
+            return
         # Fernsteuerung aus dem Live-Bild am Handy (screen_stream.py, ausgefuehrt vom Host)
         data = msg.data or {}
         if msg.type == "bildschirm_klick":
@@ -396,7 +400,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             # Sofort anwenden: neuer System-Prompt mit allem, was sie jetzt ueber Nikolaj weiss.
             facts = await memory.recall_profile()
             _profile_cache[:] = facts
-            new_prompt = build_system_prompt(facts)
+            new_prompt = build_system_prompt(facts, pc)
             await task.queue_frame(
                 LLMUpdateSettingsFrame(delta=LLMSettings(system_instruction=new_prompt))
             )

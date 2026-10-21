@@ -46,7 +46,14 @@ SCHEMA = FunctionSchema(
         "Zeigt Nikolaj den Laptop-Bildschirm live in der Oberflaeche (an=true) oder blendet ihn aus "
         "(an=false). Fuer unterwegs: so sieht er, was du am PC tust."
     ),
-    properties={"an": {"type": "boolean", "description": "true = zeigen, false = ausblenden"}},
+    properties={
+        "an": {"type": "boolean", "description": "true = zeigen, false = ausblenden"},
+        "monitor": {
+            "type": "integer",
+            "description": "Optional: 0 = automatisch (Monitor mit dem Fenster vorne), 1, 2, 3 = fester "
+            "Monitor von links gezaehlt. Nikolaj kann ihn auch selbst in der Oberflaeche waehlen.",
+        },
+    },
     required=["an"],
 )
 
@@ -77,6 +84,24 @@ def _desktop_locked() -> bool:
         return name.value.lower() != "default"
     finally:
         user32.CloseDesktop(desk)
+
+
+def monitor_count() -> int:
+    """Wie viele Monitore der Laptop gerade hat (fuer die Auswahl in der Oberflaeche)."""
+    try:
+        return max(1, int(ctypes.windll.user32.GetSystemMetrics(80)))  # SM_CMONITORS
+    except (AttributeError, OSError):
+        return 1
+
+
+def pick_monitor(sct, choice: int) -> dict:
+    """0 = der Monitor mit dem Fenster vorne; 1..n = fest gewaehlt, von links nach rechts gezaehlt.
+    21.10.: Bei drei Monitoren sah Nikolaj nur den mit dem vordersten Fenster."""
+    if choice > 0:
+        ordered = sorted(sct.monitors[1:], key=lambda m: (m["left"], m["top"]))
+        if choice <= len(ordered):
+            return ordered[choice - 1]
+    return _foreground_monitor(sct)
 
 
 def _foreground_monitor(sct) -> dict:
@@ -132,6 +157,7 @@ class _Grabber:
         self._sct = None
         self._locked_frame: bytes | None = None
         self.geometry: FrameGeometry | None = None  # zum zuletzt gesendeten Bild
+        self.choice = 0  # 0 = automatisch (Fenster vorne), sonst Monitor von links gezaehlt
 
     def grab(self) -> bytes:
         if _desktop_locked():
@@ -145,7 +171,7 @@ class _Grabber:
             except (AttributeError, OSError):
                 pass
             self._sct = mss.MSS()
-        monitor = _foreground_monitor(self._sct)
+        monitor = pick_monitor(self._sct, self.choice)
         shot = self._sct.grab(monitor)
         image = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
         image.thumbnail((WIDTH, HEIGHT), Image.Resampling.BILINEAR)
@@ -273,8 +299,25 @@ class ScreenStreamer(FrameProcessor):
         elif not on and self._task:
             await self._stop()
             logger.info("Bildschirm-Stream aus ({})", source)
-        await self.push_frame(RTVIServerMessageFrame(data={"type": "bildschirm", "aktiv": self.active}))
+        await self._announce()
         return self.active
+
+    async def set_monitor(self, value: object, source: str = "Knopf") -> int:
+        """Welcher Monitor gezeigt wird: 0 = automatisch, 1..n von links. Unsinn = automatisch."""
+        try:
+            choice = int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            choice = 0
+        self._grabber.choice = choice if 0 <= choice <= monitor_count() else 0
+        logger.info("Bildschirm-Stream zeigt Monitor {} ({})", self._grabber.choice or "automatisch", source)
+        await self._announce()
+        return self._grabber.choice
+
+    async def _announce(self) -> None:
+        """Zustand an die Oberflaeche: an/aus, gewaehlter Monitor und wie viele es gibt."""
+        await self.push_frame(RTVIServerMessageFrame(data={
+            "type": "bildschirm", "aktiv": self.active, "monitor": self._grabber.choice, "monitore": monitor_count(),
+        }))
 
     async def _stop(self) -> None:
         task, self._task = self._task, None
@@ -306,6 +349,8 @@ class ScreenStreamer(FrameProcessor):
 
 def register_stream_tool(llm, streamer: ScreenStreamer) -> FunctionSchema:
     async def bildschirm_teilen(params: FunctionCallParams):
+        if "monitor" in params.arguments:
+            await streamer.set_monitor(params.arguments.get("monitor"), "nieeeki")
         aktiv = await streamer.set_active(bool(params.arguments.get("an", True)), "nieeeki")
         await params.result_callback(
             {

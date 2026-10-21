@@ -505,6 +505,18 @@ button { font: inherit; color: inherit; }
   animation: rise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 .screen-video { width: 100%; aspect-ratio: 16 / 9; display: block; border-radius: 6px; background: #000; }
+/* Monitorwahl bei mehreren Bildschirmen: Automatisch | 1 | 2 | 3 (von links) */
+.screen-monitors {
+  align-self: flex-start; display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 3px; border-radius: 8px;
+  border: 1px solid var(--rule); background: rgba(255, 255, 255, 0.025);
+}
+.screen-monitors button {
+  appearance: none; border: 0; background: transparent; cursor: pointer; border-radius: 6px;
+  min-width: 34px; padding: 6px 12px; font: 600 11px var(--hud); letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-soft);
+}
+.screen-monitors button:hover { color: var(--ink); }
+.screen-monitors button[aria-pressed="true"] { background: var(--core); color: #160500; }
 .screen-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; font: 11px var(--hud); letter-spacing: 0.08em; color: var(--ink-soft); }
 .screen-live { display: inline-flex; align-items: center; gap: 8px; text-transform: uppercase; letter-spacing: 0.16em; }
 .screen-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--core); box-shadow: 0 0 8px var(--core); animation: pulse 1.6s ease-in-out infinite; }

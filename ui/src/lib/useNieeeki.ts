@@ -129,6 +129,9 @@ export function useNieeeki() {
   const pendingText = useRef<string | null>(null);
   // Live-Bildschirm des Laptops (voice-core/screen_stream.py), nur auf Wunsch
   const [screenOn, setScreenOn] = useState(false);
+  // Welcher Monitor im Live-Bild (0 = automatisch, der mit dem Fenster vorne) und wie viele es gibt
+  const [screenMonitor, setScreenMonitor] = useState(0);
+  const [screenMonitors, setScreenMonitors] = useState(1);
   const [screenTrack, setScreenTrack] = useState<MediaStreamTrack | null>(null);
 
   // Weicher Stopp bei Unterbrechungen (Server schickt "leiser_stopp")
@@ -252,7 +255,12 @@ export function useNieeeki() {
             items?: { id: string; grund: string; detail: string; admin?: boolean }[];
           };
           if (msg?.type === "leiser_stopp") softStop.current.armedAt = performance.now();
-          if (msg?.type === "bildschirm") setScreenOn(Boolean((msg as { aktiv?: unknown }).aktiv));
+          if (msg?.type === "bildschirm") {
+            const m = msg as { aktiv?: unknown; monitor?: unknown; monitore?: unknown };
+            setScreenOn(Boolean(m.aktiv));
+            if (typeof m.monitor === "number") setScreenMonitor(m.monitor);
+            if (typeof m.monitore === "number") setScreenMonitors(m.monitore);
+          }
           // Wer spricht (0 = Nikolaj, 1.. = weitere Stimmen) -> Farbe im Stimmen-Rand
           if (msg?.type === "sprecher" && typeof (msg as { index?: unknown }).index === "number")
             levels.current.speaker = (msg as { index: number }).index;
@@ -417,6 +425,12 @@ export function useNieeeki() {
   }, [disconnect]);
 
   // Bildschirm-Stream an/aus; den Zustand bestaetigt der Voice-Core per Nachricht "bildschirm".
+  // Monitor fuer das Live-Bild waehlen; der Voice-Core bestaetigt per Nachricht "bildschirm".
+  const chooseMonitor = useCallback((monitor: number) => {
+    setScreenMonitor(monitor);
+    clientRef.current?.sendClientMessage("bildschirm_monitor", { monitor });
+  }, []);
+
   const toggleScreen = useCallback(() => {
     clientRef.current?.sendClientMessage("bildschirm", { an: !screenOn });
   }, [screenOn]);
@@ -471,6 +485,9 @@ export function useNieeeki() {
     screenTrack,
     sendText,
     toggleScreen,
+    screenMonitor,
+    screenMonitors,
+    chooseMonitor,
     clickScreen,
     scrollScreen,
     typeOnScreen,
