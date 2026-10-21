@@ -73,7 +73,7 @@ from pc_host import decide_pc_approval, host_client, host_tools, report_pc_appro
 from screen import register_screen_tools
 from screen_stream import ScreenStreamer, register_stream_tool, video_params
 from tools import register_tools
-from soniox_tts import LazySonioxTTSService
+from soniox_tts import LazySonioxTTSService, voice_tuning
 from soft_interrupt import (
     MeaningfulWordsUserTurnStartStrategy,
     PlaybackTracker,
@@ -92,7 +92,9 @@ if sys.platform == "win32":
 # Standard: EU-Endpunkte (Datenschutz); .env kann auf US umstellen
 SONIOX_STT_URL = os.getenv("SONIOX_STT_URL", "wss://stt-rt.eu.soniox.com/transcribe-websocket")
 SONIOX_TTS_URL = os.getenv("SONIOX_TTS_URL", "wss://tts-rt.soniox.com/tts-websocket")
-SONIOX_VOICE = os.getenv("SONIOX_VOICE", "Nina")  # spaeter: UUID der geklonten Stimme
+SONIOX_VOICE = os.getenv("SONIOX_VOICE", "Lena")  # deutsche Muttersprachlerin; spaeter UUID der geklonten Stimme
+# Tempo 0,7..1,3 und kuerzere Pausen; ohne Eintrag Soniox-Standard (siehe soniox_tts.voice_tuning)
+SONIOX_TUNING = voice_tuning(os.getenv("SONIOX_SPEED"), os.getenv("SONIOX_REDUCE_SILENCE"))
 # Fachbegriffe fuer die Spracherkennung: Programme und Befehle, die Nikolaj oft sagt. Am 18.10. kam
 # "öffne mal Opera" als "erste Mal Opera" an, und nieeeki hat Opera nicht geoeffnet. Bewusst nur
 # "terms", kein "general": ein allgemeiner Kontext (domain=Sprachassistent) drueckte seine Woerter
@@ -205,7 +207,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     tts = LazySonioxTTSService(
         api_key=os.environ["SONIOX_API_KEY"],
         url=SONIOX_TTS_URL,
-        settings=SonioxTTSService.Settings(voice=SONIOX_VOICE, language=Language.DE),
+        settings=SonioxTTSService.Settings(voice=SONIOX_VOICE, language=Language.DE, **SONIOX_TUNING),
     )
 
     system_prompt = build_system_prompt(await cached_profile(memory))
