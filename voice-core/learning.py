@@ -56,6 +56,10 @@ Regeln:
 - Nichts, was unter "Bereits bekannt" steht, auch nicht umformuliert.
 - Jeder Eintrag ist ein eigenstaendiger, kurzer Satz in der dritten Person ("Nikolaj ...").
 - Keine Passwoerter, Konto-, Gesundheits- oder Daten ueber andere Personen.
+- Keine Momentaufnahmen und Aufgabenstaende: nichts, was nur gerade gilt oder eine einzelne Aufgabe
+  betrifft ("ist gerade angemeldet", "hat X angelegt oder angefordert", "in diesem Gespraech",
+  Produkte und Preise aus einer einzelnen Suche). Nur was auch in Wochen noch stimmt.
+- Nur was wirklich passiert ist: Bat Nikolaj um etwas und es klappte nicht, ist das kein Fakt.
 - wichtigkeit von 1 (Detail) bis 5 (praegt jedes Gespraech).
 - Gibt es nichts Neues, liefere eine leere Liste."""
 
