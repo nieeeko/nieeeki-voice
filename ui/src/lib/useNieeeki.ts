@@ -44,6 +44,21 @@ function fadeOutAudio(audio: HTMLAudioElement | null, state: SoftStop) {
   }, 3000);
 }
 
+/**
+ * Chromes Erlaubnis "Lokales Netzwerk" (Local Network Access): Ohne sie darf eine oeffentliche Seite
+ * (Vercel) keine private Adresse wie die Tailscale-Adresse des Laptops (100.x) aufrufen. Am Laptop
+ * selbst (localhost) und in Browsern ohne diese Sperre: null.
+ */
+async function localNetworkPermission(): Promise<PermissionState | null> {
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(VOICE_CORE_URL)) return null;
+  try {
+    const status = await navigator.permissions.query({ name: "local-network-access" as PermissionName });
+    return status.state;
+  } catch {
+    return null; // Browser kennt die Erlaubnis nicht
+  }
+}
+
 function restoreAudio(audio: HTMLAudioElement | null, state: SoftStop) {
   state.armedAt = null;
   state.fading = false;
@@ -313,11 +328,15 @@ export function useNieeeki() {
     } catch (e) {
       pendingText.current = null; // nicht beim naechsten Verbinden unerwartet nachschicken
       setPresence("offline");
-      // Fremde Herkunft weist der Voice-Core per CORS ab; der Browser meldet das nur als Netzwerkfehler
+      // Fremde Herkunft weist der Voice-Core per CORS ab; der Browser meldet das nur als Netzwerkfehler.
+      // Chrome laesst eine Webseite ausserdem nur mit Erlaubnis ins lokale Netz (Tailscale-Adresse 100.x).
+      const lna = (e as { status?: number }).status === 401 ? null : await localNetworkPermission();
       setError(
         (e as { status?: number }).status === 401
           ? "Der Voice-Core hat die Anmeldung abgelehnt. Bitte ab- und wieder anmelden."
-          : `Voice-Core unter ${VOICE_CORE_URL} nicht erreichbar (läuft bot.py, ist die Adresse ${HOME_URL} oder eine Vorschau?).`,
+          : lna === "denied" || lna === "prompt"
+            ? "Chrome lässt diese Seite nicht ins lokale Netzwerk, darum kommt sie nicht zum Voice-Core. Links neben der Adresse auf das Symbol klicken, bei „Lokales Netzwerk“ „Zulassen“ wählen und neu laden."
+            : `Voice-Core unter ${VOICE_CORE_URL} nicht erreichbar (läuft bot.py, ist die Adresse ${HOME_URL} oder eine Vorschau?).`,
       );
     }
   }, [setPresence]);
