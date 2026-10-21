@@ -399,6 +399,48 @@ class FocusTests(unittest.TestCase):
         self.assertEqual(self.keys(user32), [0x10, 0x10])
 
 
+class SecretAndSystemAppTests(unittest.TestCase):
+    def test_freigabe_schluessel_nicht_in_der_umgebung(self):
+        # 21.10.: powershell_lesen "Get-ChildItem Env:" zeigte NIEEEKI_APPROVAL_KEY dem Gespraechsmodell
+        import os
+        import subprocess
+        import sys
+
+        code = "import os, nieeeki_host; print('NIEEEKI_APPROVAL_KEY' in os.environ, bool(nieeeki_host.APPROVAL_KEY))"
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                             env={**os.environ, "NIEEEKI_APPROVAL_KEY": "geheim"}, cwd=os.path.dirname(host.__file__))
+        self.assertEqual(out.stdout.strip().splitlines()[-1], "False True")
+
+    def test_umgebungsvariablen_und_systemeigenschaften(self):
+        with mock.patch.object(host.Path, "is_file", return_value=True):
+            for name in ["Umgebungsvariablen bearbeiten", "umgebungsvariablen", "Systemeigenschaften"]:
+                with self.subTest(name=name):
+                    self.assertTrue(host.resolve_app(name).endswith("SystemPropertiesAdvanced.exe"))
+        with self.assertRaises(ValueError):
+            host.resolve_app("umgebungsvariablenx")
+
+
+class FocusCheckTests(unittest.TestCase):
+    """21.10.: nieeeki meldete 'VS Code ist vorne', obwohl Windows es nicht nach vorn gelassen hatte."""
+
+    def run_focus(self, vorne_hwnd):
+        win = {"hwnd": 7, "titel": "nieeeki-voice - Visual Studio Code", "programm": "Code.exe"}
+        with mock.patch.object(host.wc, "is_locked", return_value=False), \
+             mock.patch.object(host.wc, "find_window", return_value=win), \
+             mock.patch.object(host.wc, "focus"), \
+             mock.patch.object(host.wc, "window_rect", return_value=None), \
+             mock.patch.object(host.wc, "foreground", return_value={"hwnd": vorne_hwnd, "titel": "x", "programm": "x"}):
+            return host.fenster_fokussieren("Code")
+
+    def test_wirklich_vorne(self):
+        self.assertEqual(self.run_focus(7)["status"], "success")
+
+    def test_nicht_vorne_wird_ehrlich_gemeldet(self):
+        result = self.run_focus(99)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("nicht nach vorne", result["summary"])
+
+
 class ClaudeAppTests(unittest.TestCase):
     def test_claude_code_findet_desktop_app(self):
         # 21.10.: programm_oeffnen("Claude Code") fand die App "Claude" nicht

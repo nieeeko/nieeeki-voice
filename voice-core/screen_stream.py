@@ -24,7 +24,15 @@ from PIL import Image, ImageDraw
 
 from activity import highlight_fields
 from pipecat.adapters.schemas.function_schema import FunctionSchema
-from pipecat.frames.frames import CancelFrame, EndFrame, Frame, OutputImageRawFrame, StartFrame
+from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
+    CancelFrame,
+    EndFrame,
+    Frame,
+    OutputImageRawFrame,
+    StartFrame,
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 from pipecat.services.llm_service import FunctionCallParams
@@ -32,6 +40,9 @@ from pipecat.services.llm_service import FunctionCallParams
 WIDTH = int(os.getenv("SCREEN_STREAM_WIDTH") or 1280)
 HEIGHT = WIDTH * 9 // 16
 FPS = float(os.getenv("SCREEN_STREAM_FPS") or 4)
+# Solange nieeeki spricht, weniger Bilder: 21.10. stockte ihre Stimme bei laufendem Stream (5-18
+# Aussetzer >60 ms je 10 s statt 0-1, bis 354 ms); Aufnahme und Kodierung teilen sich die Rechenzeit.
+SPEAKING_FPS = float(os.getenv("SCREEN_STREAM_SPEAKING_FPS") or 1)
 # Fernsteuerung aus dem Live-Bild: Mindestabstand je Art (ein Doppeltippen wird nicht zu zwei Klicks)
 MIN_INTERVAL = {"klick": 0.3, "tippen": 0.3, "taste": 0.15, "scrollen": 0.1}
 REMOTE_KEYS = {"enter", "esc", "backspace", "tab"}
@@ -204,6 +215,11 @@ class ScreenStreamer(FrameProcessor):
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bildschirm")
         self._grabber = _Grabber()
         self._last: dict[str, float] = {}
+        self._bot_speaking = False
+
+    def interval(self) -> float:
+        """Abstand zwischen zwei Bildern: langsamer, solange nieeeki spricht (ihre Stimme hat Vorrang)."""
+        return 1 / (SPEAKING_FPS if self._bot_speaking else FPS)
 
     @property
     def active(self) -> bool:
@@ -327,7 +343,6 @@ class ScreenStreamer(FrameProcessor):
 
     async def _stream(self) -> None:
         loop = asyncio.get_running_loop()
-        interval = 1 / FPS
         while True:
             started = loop.time()
             try:
@@ -335,11 +350,15 @@ class ScreenStreamer(FrameProcessor):
                 await self.push_frame(OutputImageRawFrame(image=image, size=(WIDTH, HEIGHT), format="RGB"))
             except Exception as e:  # ein verlorenes Bild ist egal, der Stream laeuft weiter
                 logger.warning("Bildschirm-Stream: {}", e)
-            await asyncio.sleep(max(0.05, interval - (loop.time() - started)))
+            await asyncio.sleep(max(0.05, self.interval() - (loop.time() - started)))
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
-        if isinstance(frame, StartFrame):
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+        elif isinstance(frame, StartFrame):
             self._running = True
         elif isinstance(frame, (EndFrame, CancelFrame)):
             self._running = False

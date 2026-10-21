@@ -166,6 +166,25 @@ class FernklickTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["status"], "rejected")
 
 
+class SprechTempoTests(unittest.IsolatedAsyncioTestCase):
+    """21.10.: Mit laufendem Stream stockte nieekis Stimme; waehrend sie spricht, weniger Bilder."""
+
+    async def test_langsamer_solange_nieeeki_spricht(self):
+        from pipecat.frames.frames import BotStartedSpeakingFrame, BotStoppedSpeakingFrame
+        from pipecat.processors.frame_processor import FrameDirection
+
+        streamer = s.ScreenStreamer()
+        with mock.patch.object(streamer, "push_frame"):
+            normal = streamer.interval()
+            await streamer.process_frame(BotStartedSpeakingFrame(), FrameDirection.UPSTREAM)
+            speaking = streamer.interval()
+            await streamer.process_frame(BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+        self.assertAlmostEqual(normal, 1 / s.FPS)
+        self.assertAlmostEqual(speaking, 1 / s.SPEAKING_FPS)
+        self.assertGreater(speaking, normal)
+        self.assertAlmostEqual(streamer.interval(), normal)
+
+
 class MonitorWahlTests(unittest.IsolatedAsyncioTestCase):
     """21.10.: Bei drei Monitoren sah Nikolaj nur den mit dem Fenster vorne; jetzt per Klick waehlbar."""
 

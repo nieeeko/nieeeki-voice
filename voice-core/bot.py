@@ -74,6 +74,8 @@ from screen import register_screen_tools
 from screen_stream import ScreenStreamer, register_stream_tool, video_params
 from tools import register_tools
 from soniox_tts import LazySonioxTTSService, voice_tuning
+from cloud import CloudTools
+from consent import ConsentGuard
 from soft_interrupt import (
     MeaningfulWordsUserTurnStartStrategy,
     PlaybackTracker,
@@ -125,17 +127,19 @@ SMART_TURN_STOP_SECS = float(os.getenv("SMART_TURN_STOP_SECS") or 1.0)
 TURN_INCOMPLETE_SHORT_SECS = float(os.getenv("TURN_INCOMPLETE_SHORT_SECS") or 1.5)
 # Nach einer Pause fragt Pipecat Claude erneut. Die englischen Standardtexte fuehrten dazu, dass
 # Claude nur den Marker "●" ohne Text schickte: nieeeki blieb stumm.
+# 21.10.: Die frueheren Texte ("sag einen Satz, der ihn weiterreden laesst") erzeugten "Ja, sag ruhig
+# weiter, ich hoer zu" und "Ich bin noch da", oft obwohl Nikolaj gar nichts gesagt hatte. Jetzt:
+# erledigen, wenn klar; sonst kurz still weiter warten (○) und erst danach gezielt nachfragen.
 PAUSE_SHORT_PROMPT = (
-    "Nikolaj hat mitten im Satz kurz pausiert. Lies seine letzten Bruchstuecke zusammen. Ist klar, "
-    "was er will, erledige es jetzt (auch mit Werkzeug). Sonst sag einen ganz kurzen deutschen Satz, "
-    "der ihn weiterreden laesst. WICHTIG: Beginne mit ● und einem Leerzeichen, dann dein Text oder "
-    "Werkzeugaufruf. Nie ◐ oder ○, nie ● allein. Beispiel: ● Ja, das Pop-up, und dann?"
+    "Nikolaj hat kurz pausiert. Lies seine letzten Bruchstuecke zusammen. Ist klar, was er will, "
+    "erledige es jetzt (auch mit Werkzeug): beginne mit ● und einem Leerzeichen. Ist es noch unklar, "
+    "antworte nur mit ○ und sonst nichts: dann wartest du still weiter. Sag nie 'sag weiter', "
+    "'ich hoer zu' oder 'ich bin noch da'."
 )
 PAUSE_LONG_PROMPT = (
     "Nikolaj ist seit ein paar Sekunden still. Ist aus dem Zusammenhang klar, was er will, erledige "
-    "es jetzt. Sonst frag in einem kurzen deutschen Satz freundlich nach. WICHTIG: Beginne mit ● "
-    "und einem Leerzeichen, dann dein Text. Nie ◐ oder ○, nie ● allein. Beispiel: ● Bin noch da, "
-    "sag einfach Bescheid."
+    "es jetzt. Sonst stell genau eine konkrete Frage nach dem, was fehlt. Nie 'ich bin noch da', nie "
+    "'sag weiter'. WICHTIG: Beginne mit ● und einem Leerzeichen, dann dein Text. Nie ● allein."
 )
 TURN_INCOMPLETE_LONG_SECS = float(os.getenv("TURN_INCOMPLETE_LONG_SECS") or 3.0)  # 8 s fuehlte sich wie ein Haenger an
 # Weiche Unterbrechung: nach einem Einwurf spricht sie den Satz zu Ende, hoechstens aber
@@ -234,7 +238,10 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     # Live-Bildschirm in der Oberflaeche (Fernzugriff vom Handy), per Knopf oder Werkzeug
     streamer = ScreenStreamer()
     stream_schema = register_stream_tool(llm, streamer)
-    tools = ToolsSchema(standard_tools=[*tools.standard_tools, *dev.schemas(), stream_schema])
+    # GitHub, Vercel, Supabase direkt (ohne Claude Code, ohne Klicken im Browser), siehe cloud.py
+    cloud = CloudTools()
+    cloud.register(llm)
+    tools = ToolsSchema(standard_tools=[*tools.standard_tools, *dev.schemas(), stream_schema, *cloud.schemas()])
     context = LLMContext(tools=tools)
 
     # PC-Werkzeuge (Host per MCP-stdio) im Hintergrund dazuholen: das Gespraech wartet nicht darauf.
@@ -319,6 +326,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             SpeakerTracker(),  # wer spricht -> Farbe im Stimmen-Rand
             user_agg,
             soft_gate,
+            ConsentGuard(),  # Ja auf eine Rueckfrage = ausfuehren, nicht erneut fragen (consent.py)
             llm,
             ActivityReporter(),  # Werkzeugaufrufe live an die Oberflaeche (Zeitleiste)
             tts,
@@ -357,6 +365,12 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             return
         if msg.type == "bildschirm_taste":
             await streamer.press_key(data.get("taste"), pc_client)
+            return
+        # Freigabe-Karte fuer GitHub/Vercel/Supabase (Merge, Produktion, schreibendes SQL)
+        if msg.type == "freigabe" and data.get("job") == "cloud":
+            ja = data.get("entscheidung") == "ja"
+            result = await cloud.decide(data.get("id"), ja)
+            await report_pc_approval(task, ja, result, art="Cloud")
             return
         # Freigabe-Karte fuer eine PC-Aktion (z. B. PowerShell); Entwicklungsauftraege gehen an dev
         if msg.type == "freigabe" and data.get("job") == "pc":

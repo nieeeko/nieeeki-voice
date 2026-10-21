@@ -96,6 +96,15 @@ class KarteTests(unittest.TestCase):
         ])
         self.assertEqual(activity._status(result), "wartet")
 
+    def test_cloud_karte(self):
+        # GitHub/Vercel/Supabase (cloud.py): Karte mit job "cloud", Grund und Detail aus dem Werkzeug
+        result = {"status": "needs_approval", "approval_id": "0a1b2c3d", "job": "cloud", "dienst": "GitHub",
+                  "grund": "Pull Request 10 mergen", "detail": "nieeeko/nieeeki-voice #10: HUD"}
+        card = activity.approval_card("github", {"aktion": "pr_mergen", "nummer": 10}, result)
+        self.assertEqual((card["job"], card["projekt"]), ("cloud", "GitHub"))
+        self.assertEqual(card["items"], [{"id": "0a1b2c3d", "grund": "Pull Request 10 mergen",
+                                          "detail": "nieeeko/nieeeki-voice #10: HUD"}])
+
     def test_admin_karte_zeigt_genau_die_aktion(self):
         result = json.dumps({"status": "needs_approval", "admin": True, "approval_id": "a1b2c3d4"})
         card = activity.approval_card("als_admin", {"aktion": "powershell", "befehl": "Restart-Service Spooler",

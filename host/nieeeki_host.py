@@ -67,6 +67,11 @@ APPS: dict[str, list[str]] = {
     "vscode": [rf"{_LOCAL}\Programs\Microsoft VS Code\Code.exe"],
     "terminal": ["wt.exe"],
     "spotify": ["spotify:"],
+    # 21.10.: "Umgebungsvariablen bearbeiten" fand der Starter nicht. Systemeigenschaften (Erweitert)
+    # mit dem Knopf "Umgebungsvariablen"; Systemvariablen aendern fragt Windows selbst per UAC.
+    "systemeigenschaften": [r"C:\Windows\System32\SystemPropertiesAdvanced.exe"],
+    "umgebungsvariablen": [r"C:\Windows\System32\SystemPropertiesAdvanced.exe"],
+    "systemsteuerung": [r"C:\Windows\System32\control.exe"],
 }
 
 # ---------- PowerShell: nur lesen, alles andere braucht Freigabe ----------
@@ -87,7 +92,9 @@ BLOCKED_PATTERNS = [
 
 PENDING: dict[str, dict] = {}
 # Vom Voice-Core je Host-Start erzeugt (pc_host.py); ohne ihn fuehrt freigabe_entscheiden nichts aus.
-APPROVAL_KEY = os.getenv("NIEEEKI_APPROVAL_KEY", "")
+# Sofort aus der Umgebung nehmen: sonst erbt jede PowerShell den Schluessel, und
+# powershell_lesen "Get-ChildItem Env:" zeigte ihn am 21.10. dem Gespraechsmodell.
+APPROVAL_KEY = os.environ.pop("NIEEEKI_APPROVAL_KEY", "")
 _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
 
@@ -152,9 +159,12 @@ def validate_url(url: object) -> str:
 
 
 def resolve_app(name: object) -> str:
-    if not isinstance(name, str) or name.strip().lower() not in APPS:
+    q = name.strip().lower() if isinstance(name, str) else ""
+    # auch "Umgebungsvariablen bearbeiten" -> umgebungsvariablen (erstes Wort genuegt)
+    key = q if q in APPS else next((k for k in APPS if q.startswith(k + " ")), None)
+    if not key:
         raise ValueError(f"unbekanntes Programm, erlaubt: {', '.join(sorted(APPS))}")
-    for candidate in APPS[name.strip().lower()]:
+    for candidate in APPS[key]:
         if candidate.endswith(":") or shutil.which(candidate) or Path(candidate).is_file():
             return candidate
     raise ValueError(f"{name} ist auf diesem PC nicht installiert")
@@ -483,6 +493,12 @@ def fenster_fokussieren(fenster: str) -> dict:
         return {"status": "rejected", "summary": str(e)}
     _audit({"tool": "fenster_fokussieren", "titel": w["titel"], "programm": w["programm"], "risk": "change"})
     wc.focus(w["hwnd"])
+    # Nachpruefen statt behaupten: 21.10. meldete nieeeki "VS Code ist vorne", Windows hatte es aber
+    # nicht nach vorn gelassen, und der Live-Bildschirm zeigte weiter Chrome.
+    if wc.foreground()["hwnd"] != w["hwnd"]:
+        _audit({"tool": "fenster_fokussieren", "titel": w["titel"], "risk": "change", "error": "nicht vorne"})
+        return _highlight({"status": "error", "summary": f"Windows hat {w['titel'][:60]} nicht nach vorne "
+                           "gelassen. Nicht behaupten, es sei vorne."}, w["hwnd"])
     return _highlight({"status": "success", "summary": f"{w['titel']} ist vorne"}, w["hwnd"])
 
 
