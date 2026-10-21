@@ -554,6 +554,27 @@ class GithubTests(unittest.TestCase):
         run.assert_not_called()
         self.assertEqual(result["status"], "rejected")
 
+    def test_schon_geklont_ist_erfolg(self):
+        # nieeeki schreibt "test", geklont ist "Test": GitHub und Windows unterscheiden das nicht
+        git = self.projects / "test" / ".git"
+        git.mkdir(parents=True)
+        (git / "config").write_text('[core]\n\tbare = false\n[remote "origin"]\n\turl = https://github.com/nieeeko/Test.git\n',
+                                    encoding="utf-8")
+        with mock.patch.object(host, "_run") as run:
+            result = host.git_klonen("nieeeko/test")
+        run.assert_not_called()
+        self.assertEqual(result["status"], "success")
+        self.assertIn("schon geklont", result["summary"])
+
+    def test_fremdes_repo_im_ordner_bleibt_abgelehnt(self):
+        git = self.projects / "radar" / ".git"
+        git.mkdir(parents=True)
+        (git / "config").write_text('[remote "origin"]\n\turl = https://github.com/jemand/anders.git\n', encoding="utf-8")
+        with mock.patch.object(host, "_run") as run:
+            result = host.git_klonen("nieeeko/radar")
+        run.assert_not_called()
+        self.assertEqual(result["status"], "rejected")
+
     def test_leerer_ordner_ist_ok(self):
         (self.projects / "Test").mkdir()
         with mock.patch.object(host, "_run", return_value=self.proc()) as run:

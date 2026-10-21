@@ -362,9 +362,29 @@ def _run(args: list[str], timeout: int = GIT_TIMEOUT_SECS) -> subprocess.Complet
     return subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout)
 
 
+def _origin(folder: Path) -> str:
+    """origin-Adresse eines vorhandenen Git-Ordners (aus .git/config, ohne git aufzurufen)."""
+    try:
+        config = (folder / ".git" / "config").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    m = re.search(r'\[remote "origin"\][^\[]*?url\s*=\s*(\S+)', config)
+    return m.group(1) if m else ""
+
+
+def _same_repo(url: str, owner: str, name: str) -> bool:
+    """GitHub unterscheidet bei Namen nicht nach Gross/Klein ("test" ist "Test")."""
+    tail = url.strip().removesuffix(".git").rstrip("/").lower()
+    return tail.endswith(f"github.com/{owner}/{name}".lower()) or tail.endswith(f"github.com:{owner}/{name}".lower())
+
+
 def _clone(gh: str, owner: str, name: str) -> dict:
-    """Nach Projekte\\<name> klonen; ein leerer Ordner dort ist in Ordnung, einer mit Inhalt nicht."""
+    """Nach Projekte\\<name> klonen; ein leerer Ordner dort ist in Ordnung, einer mit Inhalt nicht.
+    Liegt dort schon genau dieses Repository, ist nichts zu tun (Windows: "test" = "Test")."""
     target = PROJECTS / name
+    if target.is_dir() and _same_repo(_origin(target), owner, name):
+        return {"status": "success", "summary": f"{owner}/{name} liegt schon geklont in Projekte\\{target.name}",
+                "ordner": str(target.resolve())}
     if target.exists() and (not target.is_dir() or any(target.iterdir())):
         return {"status": "rejected", "summary": f"Im Projekte-Ordner liegt schon {name} mit Inhalt; nichts ueberschrieben",
                 "ordner": str(target)}
