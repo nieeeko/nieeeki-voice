@@ -119,6 +119,11 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
         <span />
       </div>
 
+      {error && (
+        <p className="error-banner" role="alert">
+          {error}
+        </p>
+      )}
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">nieeeki</span>
@@ -179,7 +184,6 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
             </p>
           )}
         </div>
-        {error && <p className="error">{error}</p>}
       </aside>
 
       <main className="col-core">

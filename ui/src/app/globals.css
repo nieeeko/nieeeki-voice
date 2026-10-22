@@ -112,6 +112,8 @@ button { font: inherit; color: inherit; }
   color: var(--ink-soft); font-size: 14px;
 }
 .error { margin: 0; color: var(--cut); font-size: 14px; }
+/* Fehler immer sichtbar, auch am Handy, wo das Gespraech unter dem Kern liegt */
+.error-banner { position: fixed; top: 0; left: 0; right: 0; z-index: 60; margin: 0; padding: 12px 16px; background: var(--cut); color: #fff; font-size: 14px; line-height: 1.4; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes spin { to { transform: rotate(360deg); } }

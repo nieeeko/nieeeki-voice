@@ -99,6 +99,7 @@ export type NieeekiState = ReturnType<typeof useNieeeki>;
 
 const VOICE_CORE_URL = process.env.NEXT_PUBLIC_VOICE_CORE_URL ?? "http://localhost:7860";
 // Der Voice-Core laesst diese Adresse, localhost und die Vercel-Vorschauen herein (bot.py, auth_gate.py)
+const CONNECT_TIMEOUT_MS = 20_000;
 const HOME_URL = "https://nieeeki.nieeeko.com";
 const HISTORY = 240; // ~12 s bei 20 Hz
 // Per Weckwort begonnene Gespraeche enden nach so langer Stille von selbst; dann lauscht der PC wieder.
@@ -189,6 +190,8 @@ export function useNieeeki() {
       enableCam: false,
       callbacks: {
         onBotReady: () => {
+          ready = true;
+          clearTimeout(watchdog);
           setPresence("idle");
           setConnectedAt(Date.now());
           const text = pendingText.current;
@@ -323,6 +326,19 @@ export function useNieeeki() {
       },
     });
     clientRef.current = client;
+    // Ist der Voice-Core nicht erreichbar (z. B. Tailscale am PC aus), haengt der Verbindungsaufbau ohne
+    // Fehler. Nach CONNECT_TIMEOUT_MS gibt es deshalb eine Meldung statt endlosem "Verbinde ...".
+    let ready = false;
+    const watchdog = setTimeout(() => {
+      if (ready || clientRef.current !== client) return;
+      void client.disconnect().catch(() => {});
+      clientRef.current = null;
+      pendingText.current = null;
+      setPresence("offline");
+      setError(
+        `Keine Verbindung zum PC nach ${CONNECT_TIMEOUT_MS / 1000} s. Ist der PC an, läuft nieeeki dort, und ist Tailscale (auf PC und Handy) verbunden?`,
+      );
+    }, CONNECT_TIMEOUT_MS);
     try {
       // Der Voice-Core laesst nur Nikolaj mit zweitem Faktor herein (voice-core/auth_gate.py).
       // Der Transport schickt diese Header auch beim WebRTC-Offer und den ICE-Updates mit.
@@ -335,6 +351,7 @@ export function useNieeeki() {
         requestData: anlass === "weckwort" ? { body: { anlass } } : {},
       });
     } catch (e) {
+      clearTimeout(watchdog);
       pendingText.current = null; // nicht beim naechsten Verbinden unerwartet nachschicken
       setPresence("offline");
       // Fremde Herkunft weist der Voice-Core per CORS ab; der Browser meldet das nur als Netzwerkfehler.
