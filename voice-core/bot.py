@@ -70,7 +70,7 @@ from auth_gate import allow_preview_origins, install_owner_gate
 from session_guard import SingleSession
 from audio_monitor import AudioInputMonitor, SpeakerTracker
 from learning import learn_from_session
-from dev_agent import DevAgent
+from dev_agent import DevAgent, take_oauth_token
 from pc_host import decide_pc_approval, host_client, host_tools, report_pc_approval
 from screen import register_screen_tools
 from screen_stream import ScreenStreamer, register_stream_tool, video_params
@@ -87,6 +87,7 @@ from soft_interrupt import (
 )
 
 load_dotenv(override=True)
+take_oauth_token()  # Abo-Token nur fuer Claude Code aufbewahren, nicht an andere Unterprozesse vererben
 
 if sys.platform == "win32":
     # Hoehere Prioritaet: wenn nieeeki Programme oeffnet, belegen die kurz die CPU; das Audio soll

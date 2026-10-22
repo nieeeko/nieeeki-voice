@@ -91,6 +91,27 @@ def claude_exe() -> str:
     raise RuntimeError("claude.exe nicht gefunden (Claude Code installiert?)")
 
 
+_oauth_token: str | None = None
+
+
+def take_oauth_token() -> str:
+    """Holt CLAUDE_CODE_OAUTH_TOKEN (aus .env, erzeugt mit `claude setup-token`) einmal aus der Umgebung.
+
+    Danach steht er nur noch hier und geht ausschliesslich an Claude Code, nicht an Host, gh oder
+    andere Unterprozesse, die die Umgebung von nieeeki erben. Beim Start in bot.py aufrufen.
+    """
+    global _oauth_token
+    if _oauth_token is None:
+        _oauth_token = os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
+    return _oauth_token
+
+
+def claude_auth_env() -> dict[str, str]:
+    """Anmeldung fuer Claude Code: Abo-Token, wenn gesetzt; sonst gilt der Login auf diesem PC."""
+    token = take_oauth_token()
+    return {"CLAUDE_CODE_OAUTH_TOKEN": token} if token else {}
+
+
 def validate_project(name: object) -> Path:
     if not isinstance(name, str):
         raise ValueError("Projektname fehlt")
@@ -273,6 +294,7 @@ class DevAgent:
                "NIEEEKI_PENDING": str(pending_file), "NIEEEKI_APPROVALS": str(job.dir / "approvals.json")}
         for secret in ("ANTHROPIC_API_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SONIOX_API_KEY", "VOYAGE_API_KEY"):
             env.pop(secret, None)  # Claude Code nutzt Nikolajs eigene Anmeldung, nicht nieekis Schluessel
+        env.update(claude_auth_env())  # Abo-Token (claude setup-token), falls kein Login am PC besteht
 
         job.status = "laeuft"
         job.steps.append("Weiter nach Freigabe" if resume else f"Start in {job.projekt}")
