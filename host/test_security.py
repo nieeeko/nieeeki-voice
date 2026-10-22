@@ -399,5 +399,200 @@ class FocusTests(unittest.TestCase):
         self.assertEqual(self.keys(user32), [0x10, 0x10])
 
 
+class SecretAndSystemAppTests(unittest.TestCase):
+    def test_freigabe_schluessel_nicht_in_der_umgebung(self):
+        # 21.10.: powershell_lesen "Get-ChildItem Env:" zeigte NIEEEKI_APPROVAL_KEY dem Gespraechsmodell
+        import os
+        import subprocess
+        import sys
+
+        code = "import os, nieeeki_host; print('NIEEEKI_APPROVAL_KEY' in os.environ, bool(nieeeki_host.APPROVAL_KEY))"
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                             env={**os.environ, "NIEEEKI_APPROVAL_KEY": "geheim"}, cwd=os.path.dirname(host.__file__))
+        self.assertEqual(out.stdout.strip().splitlines()[-1], "False True")
+
+    def test_umgebungsvariablen_und_systemeigenschaften(self):
+        with mock.patch.object(host.Path, "is_file", return_value=True):
+            for name in ["Umgebungsvariablen bearbeiten", "umgebungsvariablen", "Systemeigenschaften"]:
+                with self.subTest(name=name):
+                    self.assertTrue(host.resolve_app(name).endswith("SystemPropertiesAdvanced.exe"))
+        with self.assertRaises(ValueError):
+            host.resolve_app("umgebungsvariablenx")
+
+
+class FocusCheckTests(unittest.TestCase):
+    """21.10.: nieeeki meldete 'VS Code ist vorne', obwohl Windows es nicht nach vorn gelassen hatte."""
+
+    def run_focus(self, vorne_hwnd):
+        win = {"hwnd": 7, "titel": "nieeeki-voice - Visual Studio Code", "programm": "Code.exe"}
+        with mock.patch.object(host.wc, "is_locked", return_value=False), \
+             mock.patch.object(host.wc, "find_window", return_value=win), \
+             mock.patch.object(host.wc, "focus"), \
+             mock.patch.object(host.wc, "window_rect", return_value=None), \
+             mock.patch.object(host.wc, "foreground", return_value={"hwnd": vorne_hwnd, "titel": "x", "programm": "x"}):
+            return host.fenster_fokussieren("Code")
+
+    def test_wirklich_vorne(self):
+        self.assertEqual(self.run_focus(7)["status"], "success")
+
+    def test_nicht_vorne_wird_ehrlich_gemeldet(self):
+        result = self.run_focus(99)
+        self.assertEqual(result["status"], "error")
+        self.assertIn("nicht nach vorne", result["summary"])
+
+
+class ClaudeAppTests(unittest.TestCase):
+    def test_claude_code_findet_desktop_app(self):
+        # 21.10.: programm_oeffnen("Claude Code") fand die App "Claude" nicht
+        apps = [{"Name": "Claude", "AppID": "Claude_x!Claude"}, {"Name": "Visual Studio Code", "AppID": "code"}]
+        self.assertEqual(host.wc.pick_start_app("Claude Code", apps)["AppID"], "Claude_x!Claude")
+        self.assertEqual(host.wc.pick_start_app("claude", apps)["AppID"], "Claude_x!Claude")
+        with self.assertRaises(ValueError):  # nur ganze Woerter am Anfang
+            host.wc.pick_start_app("code claude", [{"Name": "Claude", "AppID": "c"}])
+
+
+class FolderTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        self.home = Path(tempfile.mkdtemp()).resolve()
+        (self.home / "Projekte").mkdir()
+        patches = [mock.patch.object(host, "HOME", self.home), mock.patch.object(host, "PROJECTS", self.home / "Projekte")]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_anlegen_ohne_freigabe_und_wiederholbar(self):
+        target = self.home / "Projekte" / "Test"
+        first = host.ordner_anlegen(str(target))
+        second = host.ordner_anlegen(str(target))
+        self.assertEqual((first["status"], second["status"]), ("success", "success"))
+        self.assertTrue(target.is_dir())
+        self.assertIn("gibt es schon", second["summary"])
+
+    def test_nur_im_benutzerordner(self):
+        bad = [
+            "Projekte\\relativ", str(self.home), str(self.home.parent / "fremd"), "C:\\Windows\\neu",
+            str(self.home / "AppData" / "Roaming" / "x"), str(self.home / ".ssh" / "x"),
+            str(self.home / ".config" / "x"), "",
+        ]
+        for pfad in bad:
+            with self.subTest(pfad=pfad):
+                self.assertEqual(host.ordner_anlegen(pfad)["status"], "rejected")
+        self.assertFalse((self.home / "AppData").exists())
+
+
+class GithubTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+
+        self.projects = Path(tempfile.mkdtemp()).resolve()
+        for p in [mock.patch.object(host, "PROJECTS", self.projects), mock.patch.object(host, "_gh", return_value="gh.exe")]:
+            p.start()
+            self.addCleanup(p.stop)
+        host._recent_actions.clear()
+
+    @staticmethod
+    def proc(code=0, out=""):
+        return mock.Mock(returncode=code, stdout=out, stderr="")
+
+    def test_namen_und_adressen(self):
+        self.assertEqual(host.validate_github_repo("https://github.com/nieeeko/Test.git"), ("nieeeko", "Test"))
+        self.assertEqual(host.validate_github_repo("nieeeko/radar"), ("nieeeko", "radar"))
+        for bad in ["Test", "https://evil.com/a/b", "a/b/c", "nieeeko/..", "nieeeko/-x;rm", "", None]:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                host.validate_github_repo(bad)
+        for bad in ["", ".hidden", "a b", "x" * 101, "name.git", "--help"]:
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                host.validate_repo_name(bad)
+
+    def test_neu_anlegen_privat_und_klonen(self):
+        calls = []
+
+        def run(args, timeout=90):
+            calls.append(args)
+            if args[1:3] == ["api", "user"]:
+                return self.proc(out="nieeeko\n")
+            if args[1:3] == ["repo", "view"]:
+                return self.proc(code=1)
+            return self.proc()
+
+        with mock.patch.object(host, "_run", side_effect=run):
+            result = host.github_repo_anlegen("Test", beschreibung="Spielwiese")
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["url"], "https://github.com/nieeeko/Test")
+        self.assertTrue(result["angelegt"])
+        create = next(c for c in calls if c[1:3] == ["repo", "create"])
+        self.assertEqual(create, ["gh.exe", "repo", "create", "nieeeko/Test", "--private", "--description", "Spielwiese"])
+        clone = next(c for c in calls if c[1:3] == ["repo", "clone"])
+        self.assertEqual(clone, ["gh.exe", "repo", "clone", "nieeeko/Test", str(self.projects / "Test")])
+
+    def test_vorhandenes_wird_nur_geklont(self):
+        calls = []
+
+        def run(args, timeout=90):
+            calls.append(args)
+            if args[1:3] == ["api", "user"]:
+                return self.proc(out="nieeeko")
+            if args[1:3] == ["repo", "view"]:
+                return self.proc(out="PUBLIC")
+            return self.proc()
+
+        with mock.patch.object(host, "_run", side_effect=run):
+            result = host.github_repo_anlegen("Test")
+        self.assertFalse(result["angelegt"])
+        self.assertIn("public", result["hinweis"])
+        self.assertFalse(any(c[1:3] == ["repo", "create"] for c in calls))
+
+    def test_klonen_ueberschreibt_nichts(self):
+        (self.projects / "radar").mkdir()
+        (self.projects / "radar" / "README.md").write_text("da", encoding="utf-8")
+        with mock.patch.object(host, "_run") as run:
+            result = host.git_klonen("nieeeko/radar")
+        run.assert_not_called()
+        self.assertEqual(result["status"], "rejected")
+
+    def test_schon_geklont_ist_erfolg(self):
+        # nieeeki schreibt "test", geklont ist "Test": GitHub und Windows unterscheiden das nicht
+        git = self.projects / "test" / ".git"
+        git.mkdir(parents=True)
+        (git / "config").write_text('[core]\n\tbare = false\n[remote "origin"]\n\turl = https://github.com/nieeeko/Test.git\n',
+                                    encoding="utf-8")
+        with mock.patch.object(host, "_run") as run:
+            result = host.git_klonen("nieeeko/test")
+        run.assert_not_called()
+        self.assertEqual(result["status"], "success")
+        self.assertIn("schon geklont", result["summary"])
+
+    def test_fremdes_repo_im_ordner_bleibt_abgelehnt(self):
+        git = self.projects / "radar" / ".git"
+        git.mkdir(parents=True)
+        (git / "config").write_text('[remote "origin"]\n\turl = https://github.com/jemand/anders.git\n', encoding="utf-8")
+        with mock.patch.object(host, "_run") as run:
+            result = host.git_klonen("nieeeko/radar")
+        run.assert_not_called()
+        self.assertEqual(result["status"], "rejected")
+
+    def test_leerer_ordner_ist_ok(self):
+        (self.projects / "Test").mkdir()
+        with mock.patch.object(host, "_run", return_value=self.proc()) as run:
+            result = host.git_klonen("https://github.com/nieeeko/Test")
+        self.assertEqual(result["status"], "success")
+        run.assert_called_once()
+
+
+class ReadTimeoutTests(unittest.TestCase):
+    def test_lange_suche_wird_klar_gemeldet(self):
+        import subprocess
+
+        with mock.patch.object(host.platform, "system", return_value="Windows"), \
+             mock.patch.object(host.subprocess, "run", side_effect=subprocess.TimeoutExpired("powershell", 20)):
+            result = host.powershell_lesen("Get-ChildItem -Path C:\\ -Recurse", "Suche")
+        self.assertEqual(result["status"], "timeout")
+        self.assertIn("Nicht wiederholen", result["summary"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -358,7 +358,14 @@ def pick_start_app(name: str, apps: list[dict]) -> dict:
         raise ValueError("Programmname fehlt")
     exact = [a for a in apps if a["Name"].lower() == q]
     partial = sorted((a for a in apps if q in a["Name"].lower()), key=lambda a: len(a["Name"]))
-    match = (exact or partial or [None])[0]
+    # Umgekehrt: "Claude Code" -> App "Claude" (21.10.: die Desktop-App wurde so nicht gefunden).
+    # Nur ganze Woerter am Anfang, laengster Name zuerst, damit "Code" nicht "Claude Code" schlaegt.
+    words = q.split()
+    within = sorted(
+        (a for a in apps if a["Name"].split() and a["Name"].lower().split() == words[: len(a["Name"].split())]),
+        key=lambda a: -len(a["Name"]),
+    )
+    match = (exact or partial or within or [None])[0]
     if not match:
         raise ValueError(f"Kein installiertes Programm passt zu {name!r}")
     check_app_name(match["Name"])

@@ -166,5 +166,62 @@ class FernklickTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result["status"], "rejected")
 
 
+class SprechTempoTests(unittest.IsolatedAsyncioTestCase):
+    """21.10.: Mit laufendem Stream stockte nieekis Stimme; waehrend sie spricht, weniger Bilder."""
+
+    async def test_langsamer_solange_nieeeki_spricht(self):
+        from pipecat.frames.frames import BotStartedSpeakingFrame, BotStoppedSpeakingFrame
+        from pipecat.processors.frame_processor import FrameDirection
+
+        streamer = s.ScreenStreamer()
+        with mock.patch.object(streamer, "push_frame"):
+            normal = streamer.interval()
+            await streamer.process_frame(BotStartedSpeakingFrame(), FrameDirection.UPSTREAM)
+            speaking = streamer.interval()
+            await streamer.process_frame(BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM)
+        self.assertAlmostEqual(normal, 1 / s.FPS)
+        self.assertAlmostEqual(speaking, 1 / s.SPEAKING_FPS)
+        self.assertGreater(speaking, normal)
+        self.assertAlmostEqual(streamer.interval(), normal)
+
+
+class MonitorWahlTests(unittest.IsolatedAsyncioTestCase):
+    """21.10.: Bei drei Monitoren sah Nikolaj nur den mit dem Fenster vorne; jetzt per Klick waehlbar."""
+
+    # mss listet [alle, ...einzelne]; die Reihenfolge entspricht nicht der Lage
+    SCT = SimpleNamespace(monitors=[
+        {"left": -1920, "top": 0, "width": 7680, "height": 2160},
+        {"left": 0, "top": 0, "width": 3840, "height": 2160},
+        {"left": 3840, "top": 0, "width": 3840, "height": 2160},
+        {"left": -1920, "top": 0, "width": 1920, "height": 1080},
+    ])
+
+    def test_von_links_gezaehlt(self):
+        self.assertEqual(s.pick_monitor(self.SCT, 1)["left"], -1920)
+        self.assertEqual(s.pick_monitor(self.SCT, 2)["left"], 0)
+        self.assertEqual(s.pick_monitor(self.SCT, 3)["left"], 3840)
+
+    def test_automatisch_und_unsinn(self):
+        with mock.patch.object(s, "_foreground_monitor", return_value={"left": 3840}) as auto:
+            self.assertEqual(s.pick_monitor(self.SCT, 0)["left"], 3840)
+            self.assertEqual(s.pick_monitor(self.SCT, 7)["left"], 3840)
+        self.assertEqual(auto.call_count, 2)
+
+    async def test_wahl_wird_gemeldet_und_geprueft(self):
+        streamer = s.ScreenStreamer()
+        sent = []
+
+        async def push(frame, direction=None):
+            sent.append(frame)
+
+        with mock.patch.object(streamer, "push_frame", side_effect=push), \
+             mock.patch.object(s, "monitor_count", return_value=3):
+            for value, expected in [(2, 2), ("3", 3), (4, 0), (-1, 0), ("links", 0), (None, 0), (1, 1)]:
+                with self.subTest(value=value):
+                    self.assertEqual(await streamer.set_monitor(value), expected)
+        last = sent[-1].data
+        self.assertEqual((last["type"], last["monitor"], last["monitore"]), ("bildschirm", 1, 3))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -24,7 +24,15 @@ from PIL import Image, ImageDraw
 
 from activity import highlight_fields
 from pipecat.adapters.schemas.function_schema import FunctionSchema
-from pipecat.frames.frames import CancelFrame, EndFrame, Frame, OutputImageRawFrame, StartFrame
+from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
+    CancelFrame,
+    EndFrame,
+    Frame,
+    OutputImageRawFrame,
+    StartFrame,
+)
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.processors.frameworks.rtvi import RTVIServerMessageFrame
 from pipecat.services.llm_service import FunctionCallParams
@@ -32,6 +40,9 @@ from pipecat.services.llm_service import FunctionCallParams
 WIDTH = int(os.getenv("SCREEN_STREAM_WIDTH") or 1280)
 HEIGHT = WIDTH * 9 // 16
 FPS = float(os.getenv("SCREEN_STREAM_FPS") or 4)
+# Solange nieeeki spricht, weniger Bilder: 21.10. stockte ihre Stimme bei laufendem Stream (5-18
+# Aussetzer >60 ms je 10 s statt 0-1, bis 354 ms); Aufnahme und Kodierung teilen sich die Rechenzeit.
+SPEAKING_FPS = float(os.getenv("SCREEN_STREAM_SPEAKING_FPS") or 1)
 # Fernsteuerung aus dem Live-Bild: Mindestabstand je Art (ein Doppeltippen wird nicht zu zwei Klicks)
 MIN_INTERVAL = {"klick": 0.3, "tippen": 0.3, "taste": 0.15, "scrollen": 0.1}
 REMOTE_KEYS = {"enter", "esc", "backspace", "tab"}
@@ -46,7 +57,14 @@ SCHEMA = FunctionSchema(
         "Zeigt Nikolaj den Laptop-Bildschirm live in der Oberflaeche (an=true) oder blendet ihn aus "
         "(an=false). Fuer unterwegs: so sieht er, was du am PC tust."
     ),
-    properties={"an": {"type": "boolean", "description": "true = zeigen, false = ausblenden"}},
+    properties={
+        "an": {"type": "boolean", "description": "true = zeigen, false = ausblenden"},
+        "monitor": {
+            "type": "integer",
+            "description": "Optional: 0 = automatisch (Monitor mit dem Fenster vorne), 1, 2, 3 = fester "
+            "Monitor von links gezaehlt. Nikolaj kann ihn auch selbst in der Oberflaeche waehlen.",
+        },
+    },
     required=["an"],
 )
 
@@ -77,6 +95,24 @@ def _desktop_locked() -> bool:
         return name.value.lower() != "default"
     finally:
         user32.CloseDesktop(desk)
+
+
+def monitor_count() -> int:
+    """Wie viele Monitore der Laptop gerade hat (fuer die Auswahl in der Oberflaeche)."""
+    try:
+        return max(1, int(ctypes.windll.user32.GetSystemMetrics(80)))  # SM_CMONITORS
+    except (AttributeError, OSError):
+        return 1
+
+
+def pick_monitor(sct, choice: int) -> dict:
+    """0 = der Monitor mit dem Fenster vorne; 1..n = fest gewaehlt, von links nach rechts gezaehlt.
+    21.10.: Bei drei Monitoren sah Nikolaj nur den mit dem vordersten Fenster."""
+    if choice > 0:
+        ordered = sorted(sct.monitors[1:], key=lambda m: (m["left"], m["top"]))
+        if choice <= len(ordered):
+            return ordered[choice - 1]
+    return _foreground_monitor(sct)
 
 
 def _foreground_monitor(sct) -> dict:
@@ -132,6 +168,7 @@ class _Grabber:
         self._sct = None
         self._locked_frame: bytes | None = None
         self.geometry: FrameGeometry | None = None  # zum zuletzt gesendeten Bild
+        self.choice = 0  # 0 = automatisch (Fenster vorne), sonst Monitor von links gezaehlt
 
     def grab(self) -> bytes:
         if _desktop_locked():
@@ -145,7 +182,7 @@ class _Grabber:
             except (AttributeError, OSError):
                 pass
             self._sct = mss.MSS()
-        monitor = _foreground_monitor(self._sct)
+        monitor = pick_monitor(self._sct, self.choice)
         shot = self._sct.grab(monitor)
         image = Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX")
         image.thumbnail((WIDTH, HEIGHT), Image.Resampling.BILINEAR)
@@ -178,6 +215,11 @@ class ScreenStreamer(FrameProcessor):
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="bildschirm")
         self._grabber = _Grabber()
         self._last: dict[str, float] = {}
+        self._bot_speaking = False
+
+    def interval(self) -> float:
+        """Abstand zwischen zwei Bildern: langsamer, solange nieeeki spricht (ihre Stimme hat Vorrang)."""
+        return 1 / (SPEAKING_FPS if self._bot_speaking else FPS)
 
     @property
     def active(self) -> bool:
@@ -273,8 +315,25 @@ class ScreenStreamer(FrameProcessor):
         elif not on and self._task:
             await self._stop()
             logger.info("Bildschirm-Stream aus ({})", source)
-        await self.push_frame(RTVIServerMessageFrame(data={"type": "bildschirm", "aktiv": self.active}))
+        await self._announce()
         return self.active
+
+    async def set_monitor(self, value: object, source: str = "Knopf") -> int:
+        """Welcher Monitor gezeigt wird: 0 = automatisch, 1..n von links. Unsinn = automatisch."""
+        try:
+            choice = int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            choice = 0
+        self._grabber.choice = choice if 0 <= choice <= monitor_count() else 0
+        logger.info("Bildschirm-Stream zeigt Monitor {} ({})", self._grabber.choice or "automatisch", source)
+        await self._announce()
+        return self._grabber.choice
+
+    async def _announce(self) -> None:
+        """Zustand an die Oberflaeche: an/aus, gewaehlter Monitor und wie viele es gibt."""
+        await self.push_frame(RTVIServerMessageFrame(data={
+            "type": "bildschirm", "aktiv": self.active, "monitor": self._grabber.choice, "monitore": monitor_count(),
+        }))
 
     async def _stop(self) -> None:
         task, self._task = self._task, None
@@ -284,7 +343,6 @@ class ScreenStreamer(FrameProcessor):
 
     async def _stream(self) -> None:
         loop = asyncio.get_running_loop()
-        interval = 1 / FPS
         while True:
             started = loop.time()
             try:
@@ -292,11 +350,15 @@ class ScreenStreamer(FrameProcessor):
                 await self.push_frame(OutputImageRawFrame(image=image, size=(WIDTH, HEIGHT), format="RGB"))
             except Exception as e:  # ein verlorenes Bild ist egal, der Stream laeuft weiter
                 logger.warning("Bildschirm-Stream: {}", e)
-            await asyncio.sleep(max(0.05, interval - (loop.time() - started)))
+            await asyncio.sleep(max(0.05, self.interval() - (loop.time() - started)))
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
-        if isinstance(frame, StartFrame):
+        if isinstance(frame, BotStartedSpeakingFrame):
+            self._bot_speaking = True
+        elif isinstance(frame, BotStoppedSpeakingFrame):
+            self._bot_speaking = False
+        elif isinstance(frame, StartFrame):
             self._running = True
         elif isinstance(frame, (EndFrame, CancelFrame)):
             self._running = False
@@ -306,6 +368,8 @@ class ScreenStreamer(FrameProcessor):
 
 def register_stream_tool(llm, streamer: ScreenStreamer) -> FunctionSchema:
     async def bildschirm_teilen(params: FunctionCallParams):
+        if "monitor" in params.arguments:
+            await streamer.set_monitor(params.arguments.get("monitor"), "nieeeki")
         aktiv = await streamer.set_active(bool(params.arguments.get("an", True)), "nieeeki")
         await params.result_callback(
             {

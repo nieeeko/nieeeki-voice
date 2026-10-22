@@ -1,11 +1,18 @@
 import type { Metadata, Viewport } from "next";
-import { Bricolage_Grotesque, Atkinson_Hyperlegible } from "next/font/google";
+import { Atkinson_Hyperlegible, JetBrains_Mono, Unbounded } from "next/font/google";
 import "./globals.css";
 
-const display = Bricolage_Grotesque({
+// Kommandozentrale: breite Display-Schrift fuer Marke und grosse Zahlen, Mono fuer HUD-Beschriftungen
+const display = Unbounded({
   variable: "--font-display",
   subsets: ["latin"],
-  weight: ["400", "600", "800"],
+  weight: ["500", "700", "800"],
+});
+
+const hud = JetBrains_Mono({
+  variable: "--font-hud",
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
 });
 
 const body = Atkinson_Hyperlegible({
@@ -22,18 +29,17 @@ export const metadata: Metadata = {
   icons: { apple: "/icons/apple-touch-icon.png" },
 };
 
-// "cover" zeichnet bis unter Notch und Home-Leiste; die Abstaende setzt globals.css (safe-area)
+// "cover" zeichnet bis unter Notch und Home-Leiste; die Abstaende setzt globals.css (safe-area).
+// Die Oberflaeche ist bewusst immer dunkel (Kommandozentrale).
 export const viewport: Viewport = {
   viewportFit: "cover",
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#e9efee" },
-    { media: "(prefers-color-scheme: dark)", color: "#121b22" },
-  ],
+  themeColor: "#07070a",
+  colorScheme: "dark",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="de" className={`${display.variable} ${body.variable}`}>
+    <html lang="de" className={`${display.variable} ${hud.variable} ${body.variable}`}>
       <body>{children}</body>
     </html>
   );

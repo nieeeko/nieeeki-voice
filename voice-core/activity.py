@@ -19,7 +19,8 @@ DETAIL_KEYS = {
     "fenster_fokussieren": "fenster", "tasten_druecken": "kombination", "websuche": "anfrage",
     "canvas_zeigen": "titel", "auf_bildschirm_klicken": "ziel", "bildschirm_ansehen": "frage",
     "merken": "art", "entwicklung_vorbereiten": "projekt", "maus_scrollen": "richtung",
-    "als_admin": "aktion",
+    "als_admin": "aktion", "ordner_anlegen": "pfad", "github_repo_anlegen": "name", "git_klonen": "repo",
+    "github": "aktion", "vercel": "aktion", "supabase": "aktion",
 }
 
 
@@ -57,6 +58,13 @@ def approval_card(name: str, args: dict, result) -> dict | None:
     if not data or data.get("status") != "needs_approval" or not data.get("approval_id"):
         return None
     args = args if isinstance(args, dict) else {}
+    if data.get("job") == "cloud":
+        # GitHub/Vercel/Supabase (cloud.py): Grund und Detail kommen fertig aus dem Werkzeug
+        return {
+            "type": "freigaben", "job": "cloud", "projekt": str(data.get("dienst") or "Cloud"),
+            "items": [{"id": str(data["approval_id"]), "grund": str(data.get("grund") or name)[:120],
+                       "detail": str(data.get("detail") or "")[:300]}],
+        }
     if name == "als_admin":
         # Admin: genau das zeigen, was der Helfer nach der Freigabe ausfuehrt
         if args.get("aktion") == "klicken":

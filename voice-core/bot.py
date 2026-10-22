@@ -5,8 +5,9 @@ Pipeline:  Mikrofon (WebRTC, Browser-AEC) -> Silero-VAD -> Soniox STT (Streaming
 
 Unterbrechungen:
   * Waehrend nieeeki spricht, laufen VAD + STT weiter.
-  * MeaningfulWordsUserTurnStartStrategy: Rueckmeldelaute ("mhm", "ja genau") stoppen sie
-    nicht, jedes andere Wort schon ("Doch", "Stopp").
+  * Rueckmeldelaute ("mhm", "ja genau") lassen sie weiterreden. Ein einzelnes echtes Wort: sie haelt
+    an der Wortgrenze inne und spricht dort weiter, wenn nichts nachkommt. Zwei Woerter oder
+    "Stopp": Unterbrechung (soft_interrupt.py, playback.py).
   * Pipecat schreibt nur die TATSAECHLICH gesprochenen Woerter in den Kontext
     (Soniox TTS liefert Wort-Zeitstempel). Nach einer Unterbrechung sieht Claude
     genau, wo sie aufgehoert hat.
@@ -19,6 +20,7 @@ Start lokal:  uv run bot.py   (oder: python bot.py)  -> http://localhost:7860
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import sys
 
@@ -62,7 +64,7 @@ from pipecat.transports.base_transport import TransportParams
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from memory import MemoryStore
-from persona import build_system_prompt, greeting_for
+from persona import build_system_prompt, greeting_for, pc_section
 from activity import ActivityReporter
 from auth_gate import allow_preview_origins, install_owner_gate
 from session_guard import SingleSession
@@ -74,6 +76,10 @@ from screen import register_screen_tools
 from screen_stream import ScreenStreamer, register_stream_tool, video_params
 from tools import register_tools
 from soniox_tts import LazySonioxTTSService, voice_tuning
+from cloud import CloudTools
+from consent import ConsentGuard
+from fillers import FillerBank, FillerPlayer, soniox_synth
+from playback import AudioHold, PlaybackStart
 from soft_interrupt import (
     MeaningfulWordsUserTurnStartStrategy,
     PlaybackTracker,
@@ -105,8 +111,10 @@ DEFAULT_STT_TERMS = (
 )
 STT_TERMS = [t.strip() for t in os.getenv("SONIOX_TERMS", DEFAULT_STT_TERMS).split(",") if t.strip()]
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-5-5")
-# Woerter ohne Rueckmeldelaute, ab denen sie unterbrochen wird ("Doch" reicht, "mhm" nicht)
-MIN_INTERRUPT_WORDS = int(os.getenv("MIN_INTERRUPT_WORDS", "1"))
+# Woerter ohne Rueckmeldelaute, ab denen sie unterbrochen wird ("mhm", "ja genau" nie). Sofort-Woerter
+# wie "Stopp" oder "warte" unterbrechen immer (soft_interrupt.STOP_WORDS). 21.10.: Mit 1 genuegten
+# Bruchstuecke der Live-Erkennung (" Al", " Du") fuer eine Unterbrechung an der falschen Stelle.
+MIN_INTERRUPT_WORDS = int(os.getenv("MIN_INTERRUPT_WORDS") or 2)
 # Lernen im laufenden Gespraech: nach so vielen neuen Saetzen von Nikolaj wertet Haiku den
 # Abschnitt aus; Neues landet sofort im System-Prompt.
 LEARN_EVERY_USER_TURNS = int(os.getenv("LEARN_EVERY_USER_TURNS") or 4)
@@ -121,28 +129,51 @@ SUMMARY_PROMPT = (
 NIEEEKI_GREETING = os.getenv("NIEEEKI_GREETING", "Hi Nikolaj, ich bin da.")
 NIEEEKI_WAKE_GREETING = os.getenv("NIEEEKI_WAKE_GREETING", "Ja?")  # per Weckwort gestartet
 # Haelt Claude Nikolajs Satz fuer unvollstaendig, wartet sie so lange auf den Rest (Sekunden).
-SMART_TURN_STOP_SECS = float(os.getenv("SMART_TURN_STOP_SECS") or 1.0)
+# 0,6 statt 1,0 s: 95 % der Antworten warteten hier bis zu 1 s (Messung 20./21.10.). Ob Nikolaj wirklich
+# fertig ist, entscheidet danach ohnehin Claude (◐ = weiter warten), darum ist kuerzer hier sicher.
+SMART_TURN_STOP_SECS = float(os.getenv("SMART_TURN_STOP_SECS") or 0.6)
 TURN_INCOMPLETE_SHORT_SECS = float(os.getenv("TURN_INCOMPLETE_SHORT_SECS") or 1.5)
 # Nach einer Pause fragt Pipecat Claude erneut. Die englischen Standardtexte fuehrten dazu, dass
 # Claude nur den Marker "●" ohne Text schickte: nieeeki blieb stumm.
+# 21.10.: Die frueheren Texte ("sag einen Satz, der ihn weiterreden laesst") erzeugten "Ja, sag ruhig
+# weiter, ich hoer zu" und "Ich bin noch da", oft obwohl Nikolaj gar nichts gesagt hatte. Jetzt:
+# erledigen, wenn klar; sonst kurz still weiter warten (○) und erst danach gezielt nachfragen.
 PAUSE_SHORT_PROMPT = (
-    "Nikolaj hat mitten im Satz kurz pausiert. Lies seine letzten Bruchstuecke zusammen. Ist klar, "
-    "was er will, erledige es jetzt (auch mit Werkzeug). Sonst sag einen ganz kurzen deutschen Satz, "
-    "der ihn weiterreden laesst. WICHTIG: Beginne mit ● und einem Leerzeichen, dann dein Text oder "
-    "Werkzeugaufruf. Nie ◐ oder ○, nie ● allein. Beispiel: ● Ja, das Pop-up, und dann?"
+    "Nikolaj hat kurz pausiert. Lies seine letzten Bruchstuecke zusammen. Ist klar, was er will, "
+    "erledige es jetzt (auch mit Werkzeug): beginne mit ● und einem Leerzeichen. Ist es noch unklar, "
+    "antworte nur mit ○ und sonst nichts: dann wartest du still weiter. Sag nie 'sag weiter', "
+    "'ich hoer zu' oder 'ich bin noch da'."
 )
 PAUSE_LONG_PROMPT = (
     "Nikolaj ist seit ein paar Sekunden still. Ist aus dem Zusammenhang klar, was er will, erledige "
-    "es jetzt. Sonst frag in einem kurzen deutschen Satz freundlich nach. WICHTIG: Beginne mit ● "
-    "und einem Leerzeichen, dann dein Text. Nie ◐ oder ○, nie ● allein. Beispiel: ● Bin noch da, "
-    "sag einfach Bescheid."
+    "es jetzt. Sonst stell genau eine konkrete Frage nach dem, was fehlt. Nie 'ich bin noch da', nie "
+    "'sag weiter'. WICHTIG: Beginne mit ● und einem Leerzeichen, dann dein Text. Nie ● allein."
 )
 TURN_INCOMPLETE_LONG_SECS = float(os.getenv("TURN_INCOMPLETE_LONG_SECS") or 3.0)  # 8 s fuehlte sich wie ein Haenger an
-# Weiche Unterbrechung: nach einem Einwurf spricht sie den Satz zu Ende, hoechstens aber
-# das laufende Wort plus so viele weitere Woerter (nie mitten im Wort).
-SOFT_INTERRUPT_MAX_WORDS = int(os.getenv("SOFT_INTERRUPT_MAX_WORDS") or 3)
-# So weit laufen die Wort-Zeitstempel dem hoerbaren Ton voraus (gemessen: ~0,5 s).
+# Weiche Unterbrechung: nach einem Einwurf hoert sie am Ende des laufenden Worts auf (plus so viele
+# weitere Woerter; 0 = sofort an der Wortgrenze). Frueher 3 Woerter oder Satzende: bis 2,5 s Ueberlappung.
+SOFT_INTERRUPT_MAX_WORDS = int(os.getenv("SOFT_INTERRUPT_MAX_WORDS") or 0)
+# So weit laufen die Wort-Zeitstempel dem hoerbaren Ton voraus (gemessen: ~0,5 s). Nur ohne Innehalten.
 SOFT_INTERRUPT_LAG_SECS = float(os.getenv("SOFT_INTERRUPT_LAG_SECS") or 0.5)
+
+
+def env_on(name: str, default: bool) -> bool:
+    value = (os.getenv(name) or "").strip().lower()
+    return default if not value else value in ("1", "true", "ja", "an")
+
+
+# Innehalten (soft_interrupt.py, playback.py): ein einzelnes echtes Wort von Nikolaj, waehrend sie
+# spricht, laesst sie an der Wortgrenze innehalten. Kommt nichts nach (WEITER Sekunden Stille, hoechstens
+# MAX), spricht sie genau dort weiter; zwei Woerter oder "Stopp" brechen ab. 0 = Verfahren vom 21.10.
+PAUSE_ON_INTERJECTION = env_on("PAUSE_ON_INTERJECTION", True)
+INTERJECTION_RESUME_SECS = float(os.getenv("INTERJECTION_RESUME_SECS") or 0.7)
+INTERJECTION_MAX_PAUSE_SECS = float(os.getenv("INTERJECTION_MAX_PAUSE_SECS") or 2.5)
+# Fuellwoerter (fillers.py): "Moment.", wenn Claude ein Werkzeug startet, ohne vorher etwas zu sagen,
+# und nach FILLER_AFTER_SECS noch kein Ton da ist.
+FILLER_WORDS = env_on("FILLER_WORDS", True)
+FILLER_AFTER_SECS = float(os.getenv("FILLER_AFTER_SECS") or 0.4)
+# "Mhm", wenn Claude Nikolajs Satz fuer unfertig haelt (◐). Aus, bis es fuer sich allein getestet ist.
+BACKCHANNEL_MHM = env_on("BACKCHANNEL_MHM", False)
 
 INTERRUPTED_NOTE = (
     "[Hinweis fuer nieeeki: Du wurdest gerade unterbrochen. Deine letzte Antwort endet dort, "
@@ -177,6 +208,23 @@ async def cached_profile(memory) -> list[str]:
 # Referenzen halten, sonst raeumt der Garbage Collector laufende Lern-Tasks weg.
 _background_tasks: set[asyncio.Task] = set()
 
+# Fuellwoerter einmal je Prozess laden (Datei-Cache) oder bei Soniox aufnehmen, ohne das Gespraech
+# aufzuhalten: bis sie da sind, gibt es eben kein "Moment.".
+_filler_bank = FillerBank(SONIOX_VOICE, SONIOX_TUNING)
+_filler_task: asyncio.Task | None = None
+
+
+def filler_bank() -> FillerBank:
+    global _filler_task
+    if _filler_task is None or (_filler_task.done() and not _filler_bank.ready):
+        synth = functools.partial(
+            soniox_synth, os.environ["SONIOX_API_KEY"], SONIOX_TTS_URL, SONIOX_VOICE, SONIOX_TUNING
+        )
+        _filler_task = asyncio.create_task(_filler_bank.prepare(synth))
+        _background_tasks.add(_filler_task)
+        _filler_task.add_done_callback(_background_tasks.discard)
+    return _filler_bank
+
 transport_params = {
     "webrtc": lambda: TransportParams(
         audio_in_enabled=True,
@@ -210,7 +258,8 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         settings=SonioxTTSService.Settings(voice=SONIOX_VOICE, language=Language.DE, **SONIOX_TUNING),
     )
 
-    system_prompt = build_system_prompt(await cached_profile(memory))
+    pc = pc_section()  # Benutzer- und Projekte-Ordner, je Gespraech frisch (persona.pc_section)
+    system_prompt = build_system_prompt(await cached_profile(memory), pc)
 
     llm = AnthropicLLMService(
         api_key=os.environ["ANTHROPIC_API_KEY"],
@@ -233,7 +282,10 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     # Live-Bildschirm in der Oberflaeche (Fernzugriff vom Handy), per Knopf oder Werkzeug
     streamer = ScreenStreamer()
     stream_schema = register_stream_tool(llm, streamer)
-    tools = ToolsSchema(standard_tools=[*tools.standard_tools, *dev.schemas(), stream_schema])
+    # GitHub, Vercel, Supabase direkt (ohne Claude Code, ohne Klicken im Browser), siehe cloud.py
+    cloud = CloudTools()
+    cloud.register(llm)
+    tools = ToolsSchema(standard_tools=[*tools.standard_tools, *dev.schemas(), stream_schema, *cloud.schemas()])
     context = LLMContext(tools=tools)
 
     # PC-Werkzeuge (Host per MCP-stdio) im Hintergrund dazuholen: das Gespraech wartet nicht darauf.
@@ -254,6 +306,23 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     transcript: list[tuple[str, str]] = []  # fuers Lernen
     learned_upto = 0  # bis zu diesem Index in transcript ist ausgewertet
     learn_task: asyncio.Task | None = None
+
+    # Innehalten und Weitersprechen direkt am WebRTC-Ausgang (playback.py)
+    hold = AudioHold() if PAUSE_ON_INTERJECTION else None
+    if hold and not hold.install(transport.output()):
+        hold = None
+    soft_gate = SoftInterruptGate(
+        max_words=SOFT_INTERRUPT_MAX_WORDS,
+        playback_lag_secs=SOFT_INTERRUPT_LAG_SECS,
+        hold=hold,
+        resume_after_secs=INTERJECTION_RESUME_SECS,
+        max_pause_secs=INTERJECTION_MAX_PAUSE_SECS,
+    )
+    fillers = (
+        [FillerPlayer(filler_bank(), tool_fill=FILLER_WORDS, tool_after_secs=FILLER_AFTER_SECS, mhm=BACKCHANNEL_MHM)]
+        if FILLER_WORDS or BACKCHANNEL_MHM
+        else []
+    )
 
     user_agg, assistant_agg = LLMContextAggregatorPair(
         context,
@@ -277,7 +346,9 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
                 # Unterbrechen entscheidet das SoftInterruptGate, nicht die Strategie.
                 start=[
                     MeaningfulWordsUserTurnStartStrategy(
-                        min_words=MIN_INTERRUPT_WORDS, enable_interruptions=False
+                        min_words=MIN_INTERRUPT_WORDS,
+                        enable_interruptions=False,
+                        on_partial=soft_gate.hint,  # ein Wort: innehalten statt abbrechen
                     )
                 ],
                 # Satzende: Smart-Turn schlaegt vor, Claude entscheidet, ob Nikolaj fertig ist.
@@ -305,11 +376,6 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         ),
     )
 
-    soft_gate = SoftInterruptGate(
-        max_words=SOFT_INTERRUPT_MAX_WORDS,
-        playback_lag_secs=SOFT_INTERRUPT_LAG_SECS,
-    )
-
     pipeline = Pipeline(
         [
             transport.input(),
@@ -318,12 +384,15 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             SpeakerTracker(),  # wer spricht -> Farbe im Stimmen-Rand
             user_agg,
             soft_gate,
+            ConsentGuard(),  # Ja auf eine Rueckfrage = ausfuehren, nicht erneut fragen (consent.py)
             llm,
             ActivityReporter(),  # Werkzeugaufrufe live an die Oberflaeche (Zeitleiste)
+            *fillers,  # "Moment." statt Stille, wenn ein Werkzeug laeuft (fillers.py)
             tts,
             streamer,  # schiebt bei Bedarf Bildschirmbilder in die Videospur
+            *([PlaybackStart(hold)] if hold else []),  # ab hier zaehlen die Wort-Zeitstempel
             transport.output(),
-            PlaybackTracker(soft_gate),
+            PlaybackTracker(soft_gate, hold),  # meldet Woerter, wenn ihr Ton wirklich hinausgeht
             assistant_agg,
         ]
     )
@@ -340,6 +409,9 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         if msg.type == "bildschirm":
             await streamer.set_active(bool((msg.data or {}).get("an")), "Knopf")
             return
+        if msg.type == "bildschirm_monitor":  # welcher der Monitore im Live-Bild (0 = automatisch)
+            await streamer.set_monitor((msg.data or {}).get("monitor"))
+            return
         # Fernsteuerung aus dem Live-Bild am Handy (screen_stream.py, ausgefuehrt vom Host)
         data = msg.data or {}
         if msg.type == "bildschirm_klick":
@@ -353,6 +425,12 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             return
         if msg.type == "bildschirm_taste":
             await streamer.press_key(data.get("taste"), pc_client)
+            return
+        # Freigabe-Karte fuer GitHub/Vercel/Supabase (Merge, Produktion, schreibendes SQL)
+        if msg.type == "freigabe" and data.get("job") == "cloud":
+            ja = data.get("entscheidung") == "ja"
+            result = await cloud.decide(data.get("id"), ja)
+            await report_pc_approval(task, ja, result, art="Cloud")
             return
         # Freigabe-Karte fuer eine PC-Aktion (z. B. PowerShell); Entwicklungsauftraege gehen an dev
         if msg.type == "freigabe" and data.get("job") == "pc":
@@ -396,7 +474,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             # Sofort anwenden: neuer System-Prompt mit allem, was sie jetzt ueber Nikolaj weiss.
             facts = await memory.recall_profile()
             _profile_cache[:] = facts
-            new_prompt = build_system_prompt(facts)
+            new_prompt = build_system_prompt(facts, pc)
             await task.queue_frame(
                 LLMUpdateSettingsFrame(delta=LLMSettings(system_instruction=new_prompt))
             )

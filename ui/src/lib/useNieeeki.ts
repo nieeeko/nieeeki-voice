@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { PipecatClient } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import type { CanvasItem } from "@/components/Canvas";
+import { EMPTY_MISSION, nextMission, type Mission } from "@/lib/mission";
 import { accessToken } from "@/lib/supabase";
 
 export type Presence = "offline" | "connecting" | "idle" | "listening" | "thinking" | "speaking";
@@ -43,6 +44,21 @@ function fadeOutAudio(audio: HTMLAudioElement | null, state: SoftStop) {
   }, 3000);
 }
 
+/**
+ * Chromes Erlaubnis "Lokales Netzwerk" (Local Network Access): Ohne sie darf eine oeffentliche Seite
+ * (Vercel) keine private Adresse wie die Tailscale-Adresse des Laptops (100.x) aufrufen. Am Laptop
+ * selbst (localhost) und in Browsern ohne diese Sperre: null.
+ */
+async function localNetworkPermission(): Promise<PermissionState | null> {
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(VOICE_CORE_URL)) return null;
+  try {
+    const status = await navigator.permissions.query({ name: "local-network-access" as PermissionName });
+    return status.state;
+  } catch {
+    return null; // Browser kennt die Erlaubnis nicht
+  }
+}
+
 function restoreAudio(audio: HTMLAudioElement | null, state: SoftStop) {
   state.armedAt = null;
   state.fading = false;
@@ -50,7 +66,15 @@ function restoreAudio(audio: HTMLAudioElement | null, state: SoftStop) {
 }
 
 /** Aktion, die Nikolaj per Klick freigeben muss (Entwicklungsauftrag, PC, PC als Admin). */
-export type Approval = { job: string; projekt: string; id: string; grund: string; detail: string; admin?: boolean };
+export type Approval = {
+  job: string;
+  projekt: string;
+  id: string;
+  grund: string;
+  detail: string;
+  admin?: boolean;
+  seit?: number; // wann die Anfrage ankam (im Browser gesetzt)
+};
 
 /** Ein Werkzeugaufruf von nieeeki fuer die Aktivitaets-Zeitleiste (activity.py im Voice-Core). */
 export type Activity = {
@@ -60,6 +84,8 @@ export type Activity = {
   status: "laeuft" | "fertig" | "abgelehnt" | "fehler" | "wartet";
   rahmen?: number[]; // Fensterrechteck [links, oben, rechts, unten] in Bildschirmpixeln
   punkt?: number[]; // Klickpunkt [x, y]
+  seit?: number; // erste Meldung (Date.now(), im Browser gesetzt)
+  bis?: number; // letzter Statuswechsel
 };
 
 /** Ein Abtastwert der Stimmlinie: oben Nikolaj, unten nieeeki. */
@@ -67,6 +93,9 @@ export type LevelSample = { user: number; bot: number; cut: boolean; speaker: nu
 
 /** Verlauf der Stimmlinie; seq zaehlt jeden neuen Abtastwert (VoiceLine zeichnet nur dann neu). */
 export type LevelHistory = { samples: LevelSample[]; seq: number };
+
+/** Alles, was die Kommandozentrale (components/CommandCenter.tsx) anzeigt und bedient. */
+export type NieeekiState = ReturnType<typeof useNieeeki>;
 
 const VOICE_CORE_URL = process.env.NEXT_PUBLIC_VOICE_CORE_URL ?? "http://localhost:7860";
 // Der Voice-Core laesst diese Adresse, localhost und die Vercel-Vorschauen herein (bot.py, auth_gate.py)
@@ -91,8 +120,18 @@ export function useNieeeki() {
   const [canvasItems, setCanvasItems] = useState<CanvasItem[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [activities, setActivities] = useState<Activity[]>([]);
+  // Der aktuelle Auftrag (Schritte seit Nikolajs letzter Bitte) und seit wann das Gespraech laeuft
+  const [mission, setMission] = useState<Mission>(EMPTY_MISSION);
+  const missionRef = useRef<Mission>(EMPTY_MISSION);
+  const newTask = useRef(false);
+  const [connectedAt, setConnectedAt] = useState<number | null>(null);
+  // Getippter Text, waehrend das Gespraech erst aufgebaut wird
+  const pendingText = useRef<string | null>(null);
   // Live-Bildschirm des Laptops (voice-core/screen_stream.py), nur auf Wunsch
   const [screenOn, setScreenOn] = useState(false);
+  // Welcher Monitor im Live-Bild (0 = automatisch, der mit dem Fenster vorne) und wie viele es gibt
+  const [screenMonitor, setScreenMonitor] = useState(0);
+  const [screenMonitors, setScreenMonitors] = useState(1);
   const [screenTrack, setScreenTrack] = useState<MediaStreamTrack | null>(null);
 
   // Weicher Stopp bei Unterbrechungen (Server schickt "leiser_stopp")
@@ -125,7 +164,8 @@ export function useNieeeki() {
       // Weicher Stopp: in der naechsten Wortpause (spaetestens nach 600 ms) ausblenden. Hing frueher
       // an onRemoteAudioLevel, das bei SmallWebRTC nie feuert, und war deshalb nie aktiv.
       const stop = softStop.current;
-      if (stop.armedAt && !stop.fading && (levels.current.bot < 0.015 || performance.now() - stop.armedAt > 600)) {
+      // 350 statt 600 ms: der Server stoppt jetzt schon an der Wortgrenze, laenger warten wirkte hakelig
+      if (stop.armedAt && !stop.fading && (levels.current.bot < 0.015 || performance.now() - stop.armedAt > 350)) {
         fadeOutAudio(audioRef.current, stop);
       }
       const s = { ...levels.current };
@@ -148,10 +188,20 @@ export function useNieeeki() {
       enableMic: true,
       enableCam: false,
       callbacks: {
-        onBotReady: () => setPresence("idle"),
+        onBotReady: () => {
+          setPresence("idle");
+          setConnectedAt(Date.now());
+          const text = pendingText.current;
+          pendingText.current = null;
+          if (text) {
+            newTask.current = true;
+            void client.sendText(text, { run_immediately: true, audio_response: true });
+          }
+        },
         onDisconnected: () => {
           // Auch wenn der Voice-Core trennt (z. B. ein neueres Gespraech uebernimmt): Platz frei machen
           if (clientRef.current === client) clientRef.current = null;
+          setConnectedAt(null);
           setPresence("offline");
           setScreenOn(false);
           setScreenTrack(null);
@@ -161,7 +211,10 @@ export function useNieeeki() {
           if (presenceRef.current === "speaking") levels.current.cut = true;
           setPresence("listening");
         },
-        onUserStoppedSpeaking: () => setPresence("thinking"),
+        onUserStoppedSpeaking: () => {
+          newTask.current = true; // der naechste Werkzeugschritt beginnt einen neuen Auftrag
+          setPresence("thinking");
+        },
         onBotStartedSpeaking: () => {
           restoreVolume(); // neue Antwort nach einem weichen Stopp wieder hoerbar
           setBotLine("");
@@ -203,7 +256,12 @@ export function useNieeeki() {
             items?: { id: string; grund: string; detail: string; admin?: boolean }[];
           };
           if (msg?.type === "leiser_stopp") softStop.current.armedAt = performance.now();
-          if (msg?.type === "bildschirm") setScreenOn(Boolean((msg as { aktiv?: unknown }).aktiv));
+          if (msg?.type === "bildschirm") {
+            const m = msg as { aktiv?: unknown; monitor?: unknown; monitore?: unknown };
+            setScreenOn(Boolean(m.aktiv));
+            if (typeof m.monitor === "number") setScreenMonitor(m.monitor);
+            if (typeof m.monitore === "number") setScreenMonitors(m.monitore);
+          }
           // Wer spricht (0 = Nikolaj, 1.. = weitere Stimmen) -> Farbe im Stimmen-Rand
           if (msg?.type === "sprecher" && typeof (msg as { index?: unknown }).index === "number")
             levels.current.speaker = (msg as { index: number }).index;
@@ -221,8 +279,17 @@ export function useNieeeki() {
           if (msg?.type === "aktivitaet") {
             const a = msg as unknown as Activity;
             if (a.id && a.name) {
-              // gleiche id = Statuswechsel; neueste oben, hoechstens 6 Eintraege
-              setActivities((list) => [a, ...list.filter((x) => x.id !== a.id)].slice(0, 6));
+              const now = Date.now();
+              // gleiche id = Statuswechsel; neueste oben, hoechstens 30 Eintraege
+              setActivities((list) => {
+                const prev = list.find((x) => x.id === a.id);
+                const item = { ...a, seit: prev?.seit ?? now, bis: now };
+                return [item, ...list.filter((x) => x.id !== a.id)].slice(0, 30);
+              });
+              const known = missionRef.current.steps.some((s) => s.id === a.id);
+              missionRef.current = nextMission(missionRef.current, a, now, newTask.current);
+              if (!known) newTask.current = false;
+              setMission(missionRef.current);
               // Desktop-App: Lichtrahmen ums Zielfenster und Welle am Klickpunkt
               if ((a.rahmen || a.punkt) && a.status !== "laeuft") {
                 window.nieeekiDesktop?.highlight?.({ rahmen: a.rahmen, punkt: a.punkt, ok: a.status === "fertig" });
@@ -230,12 +297,17 @@ export function useNieeeki() {
             }
           }
           if (msg?.type === "freigaben" && msg.job && msg.items) {
-            const { job, projekt = "" } = msg;
-            const fresh = msg.items.map((it) => ({ ...it, job, projekt }));
-            setApprovals((list) => [
-              ...list.filter((a) => !fresh.some((f) => f.job === a.job && f.id === a.id)),
-              ...fresh,
-            ]);
+            const { job, projekt = "", items } = msg;
+            const now = Date.now();
+            setApprovals((list) => {
+              const fresh = items.map((it) => ({
+                ...it,
+                job,
+                projekt,
+                seit: list.find((a) => a.job === job && a.id === it.id)?.seit ?? now,
+              }));
+              return [...list.filter((a) => !fresh.some((f) => f.job === a.job && f.id === a.id)), ...fresh];
+            });
           }
         },
         onError: (msg) => {
@@ -263,21 +335,48 @@ export function useNieeeki() {
         requestData: anlass === "weckwort" ? { body: { anlass } } : {},
       });
     } catch (e) {
+      pendingText.current = null; // nicht beim naechsten Verbinden unerwartet nachschicken
       setPresence("offline");
-      // Fremde Herkunft weist der Voice-Core per CORS ab; der Browser meldet das nur als Netzwerkfehler
+      // Fremde Herkunft weist der Voice-Core per CORS ab; der Browser meldet das nur als Netzwerkfehler.
+      // Chrome laesst eine Webseite ausserdem nur mit Erlaubnis ins lokale Netz (Tailscale-Adresse 100.x).
+      const lna = (e as { status?: number }).status === 401 ? null : await localNetworkPermission();
       setError(
         (e as { status?: number }).status === 401
           ? "Der Voice-Core hat die Anmeldung abgelehnt. Bitte ab- und wieder anmelden."
-          : `Voice-Core unter ${VOICE_CORE_URL} nicht erreichbar (läuft bot.py, ist die Adresse ${HOME_URL} oder eine Vorschau?).`,
+          : lna === "denied" || lna === "prompt"
+            ? "Chrome lässt diese Seite nicht ins lokale Netzwerk, darum kommt sie nicht zum Voice-Core. Links neben der Adresse auf das Symbol klicken, bei „Lokales Netzwerk“ „Zulassen“ wählen und neu laden."
+            : `Voice-Core unter ${VOICE_CORE_URL} nicht erreichbar (läuft bot.py, ist die Adresse ${HOME_URL} oder eine Vorschau?).`,
       );
     }
   }, [setPresence]);
 
   const connect = useCallback(() => start("klick"), [start]);
 
+  // Getippte Bitte: geht wie gesprochen an nieeeki, sie antwortet mit Stimme. Laeuft noch kein
+  // Gespraech, wird es gestartet und der Text nach dem Verbindungsaufbau geschickt.
+  const sendText = useCallback(
+    (text: string) => {
+      const t = text.trim();
+      if (!t) return;
+      setUserLine(t);
+      const client = clientRef.current;
+      const p = presenceRef.current;
+      if (client && p !== "offline" && p !== "connecting") {
+        newTask.current = true;
+        void client.sendText(t, { run_immediately: true, audio_response: true });
+        return;
+      }
+      pendingText.current = t;
+      if (!client && p === "offline") void start("klick");
+    },
+    [start],
+  );
+
   const disconnect = useCallback(async () => {
     await clientRef.current?.disconnect();
     clientRef.current = null;
+    pendingText.current = null;
+    setConnectedAt(null);
     void botMeter.current?.ctx.close();
     botMeter.current = null;
     levels.current.bot = 0;
@@ -327,6 +426,12 @@ export function useNieeeki() {
   }, [disconnect]);
 
   // Bildschirm-Stream an/aus; den Zustand bestaetigt der Voice-Core per Nachricht "bildschirm".
+  // Monitor fuer das Live-Bild waehlen; der Voice-Core bestaetigt per Nachricht "bildschirm".
+  const chooseMonitor = useCallback((monitor: number) => {
+    setScreenMonitor(monitor);
+    clientRef.current?.sendClientMessage("bildschirm_monitor", { monitor });
+  }, []);
+
   const toggleScreen = useCallback(() => {
     clientRef.current?.sendClientMessage("bildschirm", { an: !screenOn });
   }, [screenOn]);
@@ -374,10 +479,16 @@ export function useNieeeki() {
     canvasItems,
     approvals,
     activities,
+    mission,
+    connectedAt,
     acting,
     screenOn,
     screenTrack,
+    sendText,
     toggleScreen,
+    screenMonitor,
+    screenMonitors,
+    chooseMonitor,
     clickScreen,
     scrollScreen,
     typeOnScreen,
