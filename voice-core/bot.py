@@ -5,8 +5,9 @@ Pipeline:  Mikrofon (WebRTC, Browser-AEC) -> Silero-VAD -> Soniox STT (Streaming
 
 Unterbrechungen:
   * Waehrend nieeeki spricht, laufen VAD + STT weiter.
-  * MeaningfulWordsUserTurnStartStrategy: Rueckmeldelaute ("mhm", "ja genau") stoppen sie
-    nicht, jedes andere Wort schon ("Doch", "Stopp").
+  * Rueckmeldelaute ("mhm", "ja genau") lassen sie weiterreden. Ein einzelnes echtes Wort: sie haelt
+    an der Wortgrenze inne und spricht dort weiter, wenn nichts nachkommt. Zwei Woerter oder
+    "Stopp": Unterbrechung (soft_interrupt.py, playback.py).
   * Pipecat schreibt nur die TATSAECHLICH gesprochenen Woerter in den Kontext
     (Soniox TTS liefert Wort-Zeitstempel). Nach einer Unterbrechung sieht Claude
     genau, wo sie aufgehoert hat.
@@ -19,6 +20,7 @@ Start lokal:  uv run bot.py   (oder: python bot.py)  -> http://localhost:7860
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 import sys
 
@@ -76,6 +78,8 @@ from tools import register_tools
 from soniox_tts import LazySonioxTTSService, voice_tuning
 from cloud import CloudTools
 from consent import ConsentGuard
+from fillers import FillerBank, FillerPlayer, soniox_synth
+from playback import AudioHold, PlaybackStart
 from soft_interrupt import (
     MeaningfulWordsUserTurnStartStrategy,
     PlaybackTracker,
@@ -149,8 +153,27 @@ TURN_INCOMPLETE_LONG_SECS = float(os.getenv("TURN_INCOMPLETE_LONG_SECS") or 3.0)
 # Weiche Unterbrechung: nach einem Einwurf hoert sie am Ende des laufenden Worts auf (plus so viele
 # weitere Woerter; 0 = sofort an der Wortgrenze). Frueher 3 Woerter oder Satzende: bis 2,5 s Ueberlappung.
 SOFT_INTERRUPT_MAX_WORDS = int(os.getenv("SOFT_INTERRUPT_MAX_WORDS") or 0)
-# So weit laufen die Wort-Zeitstempel dem hoerbaren Ton voraus (gemessen: ~0,5 s).
+# So weit laufen die Wort-Zeitstempel dem hoerbaren Ton voraus (gemessen: ~0,5 s). Nur ohne Innehalten.
 SOFT_INTERRUPT_LAG_SECS = float(os.getenv("SOFT_INTERRUPT_LAG_SECS") or 0.5)
+
+
+def env_on(name: str, default: bool) -> bool:
+    value = (os.getenv(name) or "").strip().lower()
+    return default if not value else value in ("1", "true", "ja", "an")
+
+
+# Innehalten (soft_interrupt.py, playback.py): ein einzelnes echtes Wort von Nikolaj, waehrend sie
+# spricht, laesst sie an der Wortgrenze innehalten. Kommt nichts nach (WEITER Sekunden Stille, hoechstens
+# MAX), spricht sie genau dort weiter; zwei Woerter oder "Stopp" brechen ab. 0 = Verfahren vom 21.10.
+PAUSE_ON_INTERJECTION = env_on("PAUSE_ON_INTERJECTION", True)
+INTERJECTION_RESUME_SECS = float(os.getenv("INTERJECTION_RESUME_SECS") or 0.7)
+INTERJECTION_MAX_PAUSE_SECS = float(os.getenv("INTERJECTION_MAX_PAUSE_SECS") or 2.5)
+# Fuellwoerter (fillers.py): "Moment.", wenn Claude ein Werkzeug startet, ohne vorher etwas zu sagen,
+# und nach FILLER_AFTER_SECS noch kein Ton da ist.
+FILLER_WORDS = env_on("FILLER_WORDS", True)
+FILLER_AFTER_SECS = float(os.getenv("FILLER_AFTER_SECS") or 0.4)
+# "Mhm", wenn Claude Nikolajs Satz fuer unfertig haelt (◐). Aus, bis es fuer sich allein getestet ist.
+BACKCHANNEL_MHM = env_on("BACKCHANNEL_MHM", False)
 
 INTERRUPTED_NOTE = (
     "[Hinweis fuer nieeeki: Du wurdest gerade unterbrochen. Deine letzte Antwort endet dort, "
@@ -184,6 +207,23 @@ async def cached_profile(memory) -> list[str]:
 
 # Referenzen halten, sonst raeumt der Garbage Collector laufende Lern-Tasks weg.
 _background_tasks: set[asyncio.Task] = set()
+
+# Fuellwoerter einmal je Prozess laden (Datei-Cache) oder bei Soniox aufnehmen, ohne das Gespraech
+# aufzuhalten: bis sie da sind, gibt es eben kein "Moment.".
+_filler_bank = FillerBank(SONIOX_VOICE, SONIOX_TUNING)
+_filler_task: asyncio.Task | None = None
+
+
+def filler_bank() -> FillerBank:
+    global _filler_task
+    if _filler_task is None or (_filler_task.done() and not _filler_bank.ready):
+        synth = functools.partial(
+            soniox_synth, os.environ["SONIOX_API_KEY"], SONIOX_TTS_URL, SONIOX_VOICE, SONIOX_TUNING
+        )
+        _filler_task = asyncio.create_task(_filler_bank.prepare(synth))
+        _background_tasks.add(_filler_task)
+        _filler_task.add_done_callback(_background_tasks.discard)
+    return _filler_bank
 
 transport_params = {
     "webrtc": lambda: TransportParams(
@@ -267,6 +307,23 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     learned_upto = 0  # bis zu diesem Index in transcript ist ausgewertet
     learn_task: asyncio.Task | None = None
 
+    # Innehalten und Weitersprechen direkt am WebRTC-Ausgang (playback.py)
+    hold = AudioHold() if PAUSE_ON_INTERJECTION else None
+    if hold and not hold.install(transport.output()):
+        hold = None
+    soft_gate = SoftInterruptGate(
+        max_words=SOFT_INTERRUPT_MAX_WORDS,
+        playback_lag_secs=SOFT_INTERRUPT_LAG_SECS,
+        hold=hold,
+        resume_after_secs=INTERJECTION_RESUME_SECS,
+        max_pause_secs=INTERJECTION_MAX_PAUSE_SECS,
+    )
+    fillers = (
+        [FillerPlayer(filler_bank(), tool_fill=FILLER_WORDS, tool_after_secs=FILLER_AFTER_SECS, mhm=BACKCHANNEL_MHM)]
+        if FILLER_WORDS or BACKCHANNEL_MHM
+        else []
+    )
+
     user_agg, assistant_agg = LLMContextAggregatorPair(
         context,
         # Lange Gespraeche zusammenfassen, bevor der Prompt teuer wird (Haiku: ab 100k Tokens 5x Preis)
@@ -289,7 +346,9 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
                 # Unterbrechen entscheidet das SoftInterruptGate, nicht die Strategie.
                 start=[
                     MeaningfulWordsUserTurnStartStrategy(
-                        min_words=MIN_INTERRUPT_WORDS, enable_interruptions=False
+                        min_words=MIN_INTERRUPT_WORDS,
+                        enable_interruptions=False,
+                        on_partial=soft_gate.hint,  # ein Wort: innehalten statt abbrechen
                     )
                 ],
                 # Satzende: Smart-Turn schlaegt vor, Claude entscheidet, ob Nikolaj fertig ist.
@@ -317,11 +376,6 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         ),
     )
 
-    soft_gate = SoftInterruptGate(
-        max_words=SOFT_INTERRUPT_MAX_WORDS,
-        playback_lag_secs=SOFT_INTERRUPT_LAG_SECS,
-    )
-
     pipeline = Pipeline(
         [
             transport.input(),
@@ -333,10 +387,12 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             ConsentGuard(),  # Ja auf eine Rueckfrage = ausfuehren, nicht erneut fragen (consent.py)
             llm,
             ActivityReporter(),  # Werkzeugaufrufe live an die Oberflaeche (Zeitleiste)
+            *fillers,  # "Moment." statt Stille, wenn ein Werkzeug laeuft (fillers.py)
             tts,
             streamer,  # schiebt bei Bedarf Bildschirmbilder in die Videospur
+            *([PlaybackStart(hold)] if hold else []),  # ab hier zaehlen die Wort-Zeitstempel
             transport.output(),
-            PlaybackTracker(soft_gate),
+            PlaybackTracker(soft_gate, hold),  # meldet Woerter, wenn ihr Ton wirklich hinausgeht
             assistant_agg,
         ]
     )
