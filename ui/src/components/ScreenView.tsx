@@ -185,6 +185,12 @@ export function ScreenView({
           ))}
         </div>
       )}
+      {monitors && monitors.count <= 1 && (
+        <p className="screen-monitors-note">
+          Der Laptop meldet nur einen Monitor. Weitere Monitore zeigt Windows erst, wenn sie erweitert sind
+          (Windows-Taste + P, „Erweitern“).
+        </p>
+      )}
       <div className="screen-stage" data-control={steering}>
         <video
           ref={ref}
