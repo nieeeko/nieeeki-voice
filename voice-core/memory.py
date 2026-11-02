@@ -176,6 +176,49 @@ class MemoryStore:
         except Exception as e:
             logger.warning("update_action fehlgeschlagen: {}", e)
 
+    async def load_voiceprint(self) -> tuple[bool, object]:
+        """Nikolajs Stimmabdruck (speakers mit is_owner) als pgvector-Text.
+        (True, None): keiner eingelernt. (False, None): Datenbank nicht erreichbar."""
+        if not self.enabled:
+            return True, None
+        try:
+            r = await self._http().get(
+                "/speakers",
+                params={"select": "voiceprint", "user_id": f"eq.{self.user_id}", "is_owner": "eq.true", "limit": "1"},
+            )
+            r.raise_for_status()
+            rows = r.json()
+            return True, (rows[0].get("voiceprint") if rows else None)
+        except Exception as e:
+            logger.warning("Stimmabdruck laden fehlgeschlagen: {}", e)
+            return False, None
+
+    async def save_voiceprint(self, vector: str) -> bool:
+        """Legt Nikolajs Abdruck an oder ersetzt ihn (genau eine Zeile mit is_owner je Nutzer)."""
+        if not self.enabled:
+            return False
+        try:
+            r = await self._http().get(
+                "/speakers", params={"select": "id", "user_id": f"eq.{self.user_id}", "is_owner": "eq.true"}
+            )
+            r.raise_for_status()
+            rows = r.json()
+            if rows:
+                r = await self._http().patch(
+                    f"/speakers?id=eq.{rows[0]['id']}&user_id=eq.{self.user_id}",
+                    json={"voiceprint": vector, "enrolled_at": datetime.now(timezone.utc).isoformat()},
+                )
+            else:
+                r = await self._http().post(
+                    "/speakers",
+                    json={"user_id": self.user_id, "name": "Nikolaj", "is_owner": True, "voiceprint": vector},
+                )
+            r.raise_for_status()
+            return True
+        except Exception as e:
+            logger.warning("Stimmabdruck speichern fehlgeschlagen: {}", e)
+            return False
+
     async def save_canvas(self, type_: str, title: str, data: dict) -> str | None:
         """Canvas-Inhalt ablegen (canvas_items), damit er spaeter wieder aufrufbar ist."""
         row = await self._insert(

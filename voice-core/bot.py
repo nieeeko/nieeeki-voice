@@ -85,6 +85,8 @@ from soft_interrupt import (
     PlaybackTracker,
     SoftInterruptGate,
 )
+from voice_gate import SpeakerVerifier, VoiceGate, gate_schemas, install_tool_gate, watch_typed_text
+from voiceprint import VoiceModel, from_vector, to_vector
 
 load_dotenv(override=True)
 take_oauth_token()  # Abo-Token nur fuer Claude Code aufbewahren, nicht an andere Unterprozesse vererben
@@ -209,6 +211,30 @@ async def cached_profile(memory) -> list[str]:
 # Referenzen halten, sonst raeumt der Garbage Collector laufende Lern-Tasks weg.
 _background_tasks: set[asyncio.Task] = set()
 
+# Stimmabdruck (voice_gate.py): Modell einmal je Prozess, Abdruck nach dem ersten Laden aus dem Speicher
+_voice_model = VoiceModel()
+_voiceprint_cache: list = []
+
+
+async def cached_voiceprint(memory) -> tuple[bool, object]:
+    if _voiceprint_cache:
+        return True, _voiceprint_cache[0]
+    ok, raw = await memory.load_voiceprint()
+    voiceprint = from_vector(raw)
+    if ok and raw is not None and voiceprint is None:
+        logger.warning("Stimmabdruck in der Datenbank hat das falsche Format")
+        return False, None
+    if voiceprint is not None:
+        _voiceprint_cache[:] = [voiceprint]
+    return ok, voiceprint
+
+
+async def store_voiceprint(memory, voiceprint) -> bool:
+    ok = await memory.save_voiceprint(to_vector(voiceprint))
+    if ok:
+        _voiceprint_cache[:] = [voiceprint]
+    return ok
+
 # Fuellwoerter einmal je Prozess laden (Datei-Cache) oder bei Soniox aufnehmen, ohne das Gespraech
 # aufzuhalten: bis sie da sind, gibt es eben kein "Moment.".
 _filler_bank = FillerBank(SONIOX_VOICE, SONIOX_TUNING)
@@ -275,6 +301,10 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             thinking=AnthropicLLMService.ThinkingConfig(type="disabled"),
         ),
     )
+    # Stimmpruefung: ab hier fragt jedes Werkzeug (ausser Uhrzeit, Websuche, Canvas) vorher, ob
+    # zuletzt Nikolaj gesprochen hat (voice_gate.py). Muss vor allen register_function stehen.
+    gate = VoiceGate.from_env()
+    install_tool_gate(llm, gate)
 
     tools = register_tools(llm, memory)
     # Entwicklungsauftraege an Claude Code; Freigaben per Klick in der UI (siehe dev_agent.py)
@@ -297,6 +327,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
     async def attach_pc_tools():
         pc = await host_tools(pc_client)
         if pc:
+            pc = gate_schemas(pc, gate)  # die Host-Werkzeuge bringen ihre Handler selbst mit
             context.set_tools(
                 ToolsSchema(standard_tools=[*tools.standard_tools, *pc.standard_tools, *screen_schemas])
             )
@@ -323,6 +354,13 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         [FillerPlayer(filler_bank(), tool_fill=FILLER_WORDS, tool_after_secs=FILLER_AFTER_SECS, mhm=BACKCHANNEL_MHM)]
         if FILLER_WORDS or BACKCHANNEL_MHM
         else []
+    )
+
+    async def say(text: str) -> None:
+        await task.queue_frames([TTSSpeakFrame(text)])
+
+    verifier = SpeakerVerifier(
+        gate, _voice_model, save=functools.partial(store_voiceprint, memory), say=say
     )
 
     user_agg, assistant_agg = LLMContextAggregatorPair(
@@ -381,6 +419,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         [
             transport.input(),
             AudioInputMonitor(),  # Diagnose: Luecken und Pegel des Browser-Mikrofons
+            verifier,  # Stimmabdruck: spricht Nikolaj? Einlernen per Klick (voice_gate.py)
             stt,
             SpeakerTracker(),  # wer spricht -> Farbe im Stimmen-Rand
             user_agg,
@@ -403,6 +442,11 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
     )
     dev.attach(task)
+    watch_typed_text(task.rtvi, gate)  # getippter Text aus der Oberflaeche zaehlt wie Nikolaj
+
+    @task.rtvi.event_handler("on_client_ready")
+    async def on_client_ready(_rtvi):
+        await verifier.report_status()  # Stand der Stimmpruefung fuer die Oberflaeche
 
     @task.rtvi.event_handler("on_client_message")
     async def on_client_message(_rtvi, msg):
@@ -415,6 +459,13 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
             return
         # Fernsteuerung aus dem Live-Bild am Handy (screen_stream.py, ausgefuehrt vom Host)
         data = msg.data or {}
+        # Stimmabdruck einlernen: nur per Klick in der angemeldeten Oberflaeche, nie per Sprache
+        if msg.type == "stimmabdruck":
+            if data.get("aktion") == "start":
+                await verifier.start_enrollment()
+            else:
+                await verifier.cancel_enrollment()
+            return
         if msg.type == "bildschirm_klick":
             await streamer.click(data.get("x"), data.get("y"), pc_client, data.get("taste"))
             return
@@ -494,6 +545,10 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         greeting = greeting_for(runner_args.body, NIEEEKI_GREETING, NIEEEKI_WAKE_GREETING)
         if greeting:
             await task.queue_frames([TTSSpeakFrame(greeting)])
+        # Modell und Stimmabdruck im Hintergrund laden; das Gespraech wartet nicht darauf
+        prepare = asyncio.create_task(verifier.prepare(functools.partial(cached_voiceprint, memory)))
+        _background_tasks.add(prepare)
+        prepare.add_done_callback(_background_tasks.discard)
         # Sitzung erst nach der Begruessung anlegen (Supabase-Insert kostete ~0,6 s vor dem ersten Ton)
         await memory.start_session(channel=os.getenv("NIEEEKI_CHANNEL", "web"))
 
