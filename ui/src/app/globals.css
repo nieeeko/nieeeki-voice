@@ -587,6 +587,32 @@ button { font: inherit; color: inherit; }
   font: 700 12px var(--hud); letter-spacing: 0.2em; text-transform: uppercase; color: #160500;
   background: linear-gradient(180deg, var(--core-hot), var(--core)); box-shadow: 0 10px 30px -12px var(--core);
 }
+/* ---------- Stimmabdruck einlernen ---------- */
+.enroll {
+  width: min(100%, 720px); margin: 0 auto; display: grid; gap: 14px; padding: 22px 24px; border-radius: 10px;
+  border: 1px solid var(--rule-strong);
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.02) 0 1px, transparent 1px 5px),
+    linear-gradient(180deg, rgba(255, 74, 28, 0.07), rgba(15, 15, 21, 0.9) 60%);
+  box-shadow: 0 24px 60px -36px var(--core);
+  animation: rise 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.enroll-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.enroll h2 { margin: 0; font: 700 22px/1.2 var(--display); letter-spacing: 0.02em; }
+.enroll-hint { margin: 0; color: var(--ink-soft); font-size: 14px; line-height: 1.5; }
+.enroll-text {
+  margin: 0; padding: 16px 18px; border-left: 2px solid var(--core); border-radius: 0 8px 8px 0;
+  background: rgba(0, 0, 0, 0.35); font-size: 18px; line-height: 1.65; color: var(--ink);
+}
+.enroll-bar { height: 8px; border-radius: 999px; background: rgba(241, 237, 230, 0.1); overflow: hidden; }
+.enroll-bar span {
+  display: block; height: 100%; border-radius: inherit; transition: width 0.4s ease;
+  background: linear-gradient(90deg, var(--core-deep), var(--core), var(--core-hot)); box-shadow: 0 0 12px var(--core);
+}
+.enroll-status { margin: 0; font: 500 12px var(--hud); letter-spacing: 0.08em; color: var(--ink-soft); }
+.enroll-status[data-state="fehler"] { color: var(--cut); }
+.enroll-status[data-state="fertig"] { color: var(--core); }
+
 .wake:disabled { opacity: 0.6; cursor: progress; }
 .gate-form .wake { margin-top: 6px; }
 
@@ -616,6 +642,8 @@ button { font: inherit; color: inherit; }
   .kinds { grid-template-columns: 1fr; }
   .mission-step-num { font-size: 46px; }
   .mission-clock-value { font-size: 26px; }
+  .enroll { padding: 18px 16px; }
+  .enroll-text { font-size: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -7,8 +7,9 @@ import { Composer } from "@/components/Composer";
 import { HudOrb } from "@/components/HudOrb";
 import { Mission } from "@/components/Mission";
 import { ScreenView } from "@/components/ScreenView";
+import { VoiceEnroll } from "@/components/VoiceEnroll";
 import { VoiceLine } from "@/components/VoiceLine";
-import type { NieeekiState, Presence } from "@/lib/useNieeeki";
+import type { NieeekiState, Presence, VoiceCheck } from "@/lib/useNieeeki";
 
 /*
  * Kommandozentrale: links das Gespraech, in der Mitte der Kern (oder Canvas / Live-Bildschirm),
@@ -36,6 +37,21 @@ const CANVAS_KINDS = [
 
 type View = "kern" | "canvas" | "bildschirm";
 type Side = "freigaben" | "verlauf";
+
+/** Stimmpruefung in der Kopfzeile: was zuletzt erkannt wurde und wie aehnlich (0..1) es dem Abdruck war. */
+function voiceModule(v: VoiceCheck): { on: string; text: string; title: string } | null {
+  if (!v.status || v.status === "aus") return null;
+  const title =
+    v.modus === "streng" ? "Nur deine Stimme darf Aufträge auslösen" : "Beobachten: misst nur, sperrt noch nichts";
+  if (v.status === "fehlt") return { on: "warn", text: "Nicht eingelernt", title: "Oben „Stimme einlernen“ wählen" };
+  if (v.status === "kaputt") return { on: "warn", text: "Fehler", title: "Modell oder Abdruck nicht geladen (Log des Voice-Core)" };
+  if (v.status === "laedt") return { on: "false", text: "Lädt", title };
+  const wert = v.wert === undefined ? "" : ` ${v.wert.toFixed(2).replace(".", ",")}`;
+  if (v.ergebnis === "nikolaj") return { on: "true", text: `Nikolaj${wert}`, title };
+  if (v.ergebnis === "fremd") return { on: "warn", text: `Fremd${wert}`, title };
+  if (v.ergebnis === "unklar") return { on: "false", text: `Unklar${wert}`, title };
+  return { on: "false", text: "Bereit", title };
+}
 
 /** Sitzungsdauer im eigenen Takt (die Seite rendert dafuer nicht jede Sekunde neu). */
 function SessionClock({ since }: { since: number | null }) {
@@ -84,10 +100,15 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
     typeOnScreen,
     pressOnScreen,
     decide,
+    voice,
+    enrollment,
+    startEnrollment,
+    closeEnrollment,
     connect,
     disconnect,
   } = n;
   const online = presence !== "offline" && presence !== "connecting";
+  const voiceInfo = online ? voiceModule(voice) : null;
   const state = acting && online ? "Handelt" : PRESENCE_TEXT[presence];
   const toggleConversation = () => void (online ? disconnect() : connect());
 
@@ -102,6 +123,7 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
   if (canvasItems.length > pick.canvas) view = "canvas";
   if (screenOn && !pick.screen) view = "bildschirm";
   if (view === "bildschirm" && !screenOn) view = "kern";
+  const shown: View | null = enrollment ? null : view;
   const choose = (v: View) => setPick({ view: v, canvas: canvasItems.length, screen: screenOn });
 
   // Rechte Spalte: eine neue Freigabe holt den Reiter "Freigaben" nach vorn
@@ -138,6 +160,11 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
               Bildschirm <b>{screenOn ? "Live" : "Aus"}</b>
             </li>
           )}
+          {voiceInfo && (
+            <li data-on={voiceInfo.on} title={voiceInfo.title}>
+              Stimme <b>{voiceInfo.text}</b>
+            </li>
+          )}
           {approvals.length > 0 && (
             <li data-on="warn">
               Freigaben <b>{approvals.length}</b>
@@ -148,6 +175,11 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
           <span className="hud-label">Sitzung</span>
           <SessionClock since={connectedAt} />
         </div>
+        {voiceInfo && !enrollment && (
+          <button type="button" className="gate-link" onClick={startEnrollment}>
+            {voice.status === "bereit" ? "Stimme neu einlernen" : "Stimme einlernen"}
+          </button>
+        )}
         <button
           type="button"
           className="gate-link"
@@ -187,21 +219,25 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
       </aside>
 
       <main className="col-core">
-        <nav className="views" aria-label="Ansicht">
-          <button type="button" aria-pressed={view === "kern"} onClick={() => choose("kern")}>
-            Kern
-          </button>
-          <button type="button" aria-pressed={view === "canvas"} onClick={() => choose("canvas")}>
-            Canvas{canvasItems.length > 0 && <span className="count">{canvasItems.length}</span>}
-          </button>
-          {(online || screenOn) && (
-            <button type="button" aria-pressed={view === "bildschirm"} onClick={() => choose("bildschirm")}>
-              Bildschirm{screenOn && <span className="count live">Live</span>}
+        {/* Beim Einlernen nur der Vorlesetext, sonst Kern, Canvas oder Live-Bildschirm */}
+        {enrollment && <VoiceEnroll enrollment={enrollment} onClose={closeEnrollment} />}
+        {shown && (
+          <nav className="views" aria-label="Ansicht">
+            <button type="button" aria-pressed={shown === "kern"} onClick={() => choose("kern")}>
+              Kern
             </button>
-          )}
-        </nav>
+            <button type="button" aria-pressed={shown === "canvas"} onClick={() => choose("canvas")}>
+              Canvas{canvasItems.length > 0 && <span className="count">{canvasItems.length}</span>}
+            </button>
+            {(online || screenOn) && (
+              <button type="button" aria-pressed={shown === "bildschirm"} onClick={() => choose("bildschirm")}>
+                Bildschirm{screenOn && <span className="count live">Live</span>}
+              </button>
+            )}
+          </nav>
+        )}
 
-        {view === "kern" && (
+        {shown === "kern" && (
           <div className="core-view" data-mission={hasMission}>
             <div className="core-stage">
               <HudOrb presence={presence} levels={levels} acting={acting} onToggle={toggleConversation} />
@@ -226,7 +262,7 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
           </div>
         )}
 
-        {view === "canvas" &&
+        {shown === "canvas" &&
           (canvasItems.length > 0 ? (
             <Canvas items={canvasItems} />
           ) : (
@@ -244,7 +280,7 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
             </div>
           ))}
 
-        {view === "bildschirm" && screenOn && (
+        {shown === "bildschirm" && screenOn && (
           <ScreenView
             track={screenTrack}
             control={{ tap: clickScreen, scroll: scrollScreen, type: typeOnScreen, key: pressOnScreen }}
