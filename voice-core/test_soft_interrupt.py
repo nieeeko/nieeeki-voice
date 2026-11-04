@@ -32,6 +32,8 @@ from soft_interrupt import (
     MeaningfulWordsUserTurnStartStrategy,
     PlaybackTracker,
     SoftInterruptGate,
+    asks_so_far,
+    is_answer,
     is_stop_request,
     meaningful_word_count,
 )
@@ -69,6 +71,22 @@ class WortTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertFalse(is_stop_request(text))
 
+    def test_antwort_auf_ihre_frage(self):
+        for text in ["Ja", " ja genau", "Okay.", "Klar", "mach"]:
+            with self.subTest(text=text):
+                self.assertTrue(is_answer(text))
+        for text in ["mhm", "aha", "Ja, aber", "Ja?", "Bitte?", "Nein", "Leg das an", "J", ""]:
+            with self.subTest(text=text):
+                self.assertFalse(is_answer(text))
+
+    def test_fragebeginn_ohne_fragezeichen(self):
+        for text in ["Soll ich das tun", "Darf ich", "Moechtest du", "Passt das?"]:
+            with self.subTest(text=text):
+                self.assertTrue(asks_so_far(text))
+        for text in ["Ich kann das", "Erledigt.", ""]:
+            with self.subTest(text=text):
+                self.assertFalse(asks_so_far(text))
+
 
 class StartTests(unittest.IsolatedAsyncioTestCase):
     async def strategy(self, on_partial=None):
@@ -104,6 +122,71 @@ class StartTests(unittest.IsolatedAsyncioTestCase):
             await s.process_frame(interim(" Danke"))
             await s.process_frame(interim(" Leg das"))  # zwei Woerter: Unterbrechung, kein Ansatz
         partial.assert_called_once_with(" Danke")
+
+
+class FrageTests(unittest.IsolatedAsyncioTestCase):
+    """Ein "Ja" waehrend ihrer Frage ist die Antwort und kein Rueckmeldelaut (04.11.2026)."""
+
+    async def triggered(self, text, *, asking, speaking=True):
+        s = MeaningfulWordsUserTurnStartStrategy(
+            min_words=2, enable_interruptions=False, asking=lambda: asking
+        )
+        if speaking:
+            await s.process_frame(BotStartedSpeakingFrame())
+        with mock.patch.object(s, "trigger_user_turn_started") as started, \
+             mock.patch.object(s, "trigger_reset_aggregation") as reset:
+            await s.process_frame(interim(text))
+        return started.await_count > 0, reset.await_count > 0
+
+    async def test_ja_waehrend_ihrer_frage_ist_die_antwort(self):
+        for text in ["Ja", " ja genau", "Okay", "Klar", "mach"]:
+            with self.subTest(text=text):
+                started, reset = await self.triggered(text, asking=True)
+                self.assertTrue(started)
+                self.assertFalse(reset)  # das Transkript bleibt erhalten
+
+    async def test_ohne_frage_bleibt_ja_ein_rueckmeldelaut(self):
+        for text in ["Ja", "ja genau", "Okay"]:
+            with self.subTest(text=text):
+                self.assertEqual(await self.triggered(text, asking=False), (False, True))
+
+    async def test_zuhoeren_bleibt_auch_bei_einer_frage_zuhoeren(self):
+        for text in ["mhm", "aha", "hmm", " J"]:
+            with self.subTest(text=text):
+                self.assertEqual(await self.triggered(text, asking=True), (False, True))
+
+    async def test_ohne_sprechende_nieeeki_greift_die_basisklasse(self):
+        # Spricht sie nicht und laeuft kein Werkzeug, startet wie bisher jedes Wort den Satz ("asking" egal).
+        started, _ = await self.triggered("Ja", asking=True, speaking=False)
+        self.assertTrue(started)
+
+    async def test_waehrend_werkzeug_bleibt_okay_zuhoeren(self):
+        # Review 04.11.: Der Guard "sie spricht" schuetzt genau diesen Fall. Ihre letzte Frage steht noch
+        # als Frage da, sie spricht aber nicht, ein Werkzeug laeuft: "okay" darf es nicht abbrechen.
+        s = MeaningfulWordsUserTurnStartStrategy(
+            min_words=2, enable_interruptions=False, asking=lambda: True
+        )
+        await s.process_frame(
+            FunctionCallInProgressFrame(function_name="git_klonen", tool_call_id="t1", arguments={})
+        )
+        with mock.patch.object(s, "trigger_user_turn_started") as started, \
+             mock.patch.object(s, "trigger_reset_aggregation"):
+            await s.process_frame(interim("okay"))
+        self.assertEqual(started.await_count, 0)
+
+    async def test_aber_und_nachfragen_sind_keine_antwort(self):
+        for text in ["Ja, aber", "Ja?", "Bitte?"]:  # "lieber nicht" (zwei echte Woerter) unterbricht ohnehin
+            with self.subTest(text=text):
+                started, _ = await self.triggered(text, asking=True)
+                self.assertFalse(started)
+
+    async def test_ohne_asking_verhalten_wie_bisher(self):
+        s = MeaningfulWordsUserTurnStartStrategy(min_words=2, enable_interruptions=False)
+        await s.process_frame(BotStartedSpeakingFrame())
+        with mock.patch.object(s, "trigger_user_turn_started") as started, \
+             mock.patch.object(s, "trigger_reset_aggregation"):
+            await s.process_frame(interim("Ja"))
+        self.assertEqual(started.await_count, 0)
 
 
 class WerkzeugTests(unittest.IsolatedAsyncioTestCase):
@@ -154,6 +237,107 @@ class GrenzeTests(unittest.TestCase):
             cut = gate.on_word_played("lege")  # das naechste Wort beginnt: hier ist Schluss
         fire.assert_called_once()
         self.assertTrue(cut)
+
+
+class FrageErkennenTests(unittest.IsolatedAsyncioTestCase):
+    """SoftInterruptGate.asking(): fragt sie gerade (nach den Woertern, die schon erklungen sind)?"""
+
+    def speak(self, gate, text):
+        for w in text.split():
+            gate.on_word(w)
+
+    def test_mitten_in_der_frage(self):
+        gate = SoftInterruptGate()
+        self.speak(gate, "Soll ich Chrome oeffnen")  # das Fragezeichen fehlt noch
+        self.assertTrue(gate.asking())
+
+    def test_frage_zu_ende_gesprochen(self):
+        gate = SoftInterruptGate()
+        self.speak(gate, "Ich habe das gefunden. Passt das?")
+        self.assertTrue(gate.asking())
+
+    def test_nach_der_frage_kommt_eine_aussage(self):
+        gate = SoftInterruptGate()
+        self.speak(gate, "Soll ich das so machen? Das dauert nur kurz")
+        self.assertFalse(gate.asking())
+
+    def test_aussage_ist_keine_frage(self):
+        gate = SoftInterruptGate()
+        self.speak(gate, "Ich habe Chrome geoeffnet.")
+        self.assertFalse(gate.asking())
+        gate2 = SoftInterruptGate()
+        self.speak(gate2, "Ich oeffne gleich")
+        self.assertFalse(gate2.asking())
+
+    def test_vor_dem_ersten_wort_keine_frage(self):
+        self.assertFalse(SoftInterruptGate().asking())
+
+    def test_fragebeginn_mitten_im_satz(self):
+        # Review 04.11.: nicht nur "Soll ich" - auch "Darf ich", "Moechtest du", "Kann ich".
+        for satz in ["Darf ich Chrome oeffnen", "Moechtest du das so", "Möchtest du", "Kann ich dir helfen",
+                     "Okay, soll ich das tun"]:
+            with self.subTest(satz=satz):
+                gate = SoftInterruptGate()
+                self.speak(gate, satz)
+                self.assertTrue(gate.asking())
+
+    def test_aussage_mit_modalverb_ist_keine_frage(self):
+        for satz in ["Ich kann das oeffnen", "Du darfst das gern tun", "Das moechte ich nicht"]:
+            with self.subTest(satz=satz):
+                gate = SoftInterruptGate()
+                self.speak(gate, satz)
+                self.assertFalse(gate.asking())
+
+    def test_fragezeichen_mit_ausrufezeichen_und_anfuehrungszeichen(self):
+        for satz in ["Passt das?!", 'Er fragte "Passt das?"', "Passt das?”"]:
+            with self.subTest(satz=satz):
+                gate = SoftInterruptGate()
+                self.speak(gate, satz)
+                self.assertTrue(gate.asking())
+                self.speak(gate, "Gut")  # nach der Frage kommt eine Aussage: Frage vorbei
+                self.assertFalse(gate.asking())
+
+    def test_wartende_woerter_zaehlen_nicht(self):
+        # Review 04.11.: Haelt sie inne, wartet ihr Wort (HOLD) und ist noch nicht erklungen. Erst wenn es
+        # nach dem Weitersprechen wirklich gespielt wird, gehoert es zur Frage.
+        gate = SoftInterruptGate()
+        self.speak(gate, "Ich habe das gefunden.")
+        gate._pause("Test")
+        self.assertEqual(gate.on_word("Passt"), HOLD)
+        self.assertEqual(gate.on_word("das?"), HOLD)
+        self.assertFalse(gate.asking())
+        gate._resume("Test")
+        self.speak(gate, "Passt das?")
+        self.assertTrue(gate.asking())
+
+    async def test_verdrahtung_gate_und_strategie(self):
+        # bot.py: asking=soft_gate.asking. Mit echtem Gate: waehrend der Frage startet "Ja" den Satz,
+        # nach der Frage (eine Aussage folgt) nicht mehr.
+        gate = SoftInterruptGate()
+        self.speak(gate, "Soll ich Chrome")
+        self.assertTrue(await self.ja_startet(gate))
+        self.speak(gate, "oeffnen? Das dauert nur kurz")
+        self.assertFalse(await self.ja_startet(gate))
+
+    async def ja_startet(self, gate):
+        s = MeaningfulWordsUserTurnStartStrategy(
+            min_words=2, enable_interruptions=False, asking=gate.asking
+        )
+        await s.process_frame(BotStartedSpeakingFrame())
+        with mock.patch.object(s, "trigger_user_turn_started") as started, \
+             mock.patch.object(s, "trigger_reset_aggregation"):
+            await s.process_frame(interim("Ja"))
+        return started.await_count > 0
+
+    async def test_neue_antwort_beginnt_ohne_frage(self):
+        gate = SoftInterruptGate()
+        self.speak(gate, "Passt das?")
+        self.assertTrue(gate.asking())
+        # Der Prozessor ist nicht gestartet: Basisklasse und Weitergabe ersetzen, getestet wird nur das Gate.
+        with mock.patch.object(FrameProcessor, "process_frame", new=mock.AsyncMock()), \
+             mock.patch.object(gate, "push_frame", new=mock.AsyncMock()):
+            await gate.process_frame(BotStartedSpeakingFrame(), FrameDirection.DOWNSTREAM)
+        self.assertFalse(gate.asking())
 
 
 class InnehaltenTests(unittest.TestCase):

@@ -388,6 +388,7 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
                         min_words=MIN_INTERRUPT_WORDS,
                         enable_interruptions=False,
                         on_partial=soft_gate.hint,  # ein Wort: innehalten statt abbrechen
+                        asking=soft_gate.asking,  # "Ja" waehrend ihrer Frage ist die Antwort
                     )
                 ],
                 # Satzende: Smart-Turn schlaegt vor, Claude entscheidet, ob Nikolaj fertig ist.

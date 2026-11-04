@@ -35,9 +35,16 @@ def _text(content: object) -> str:
     return ""
 
 
-def _is_question(text: str) -> bool:
+def is_question(text: str) -> bool:
+    """Frage: Fragezeichen am Ende (auch "?!" und mit schliessendem Anfuehrungszeichen) oder "soll ich"."""
     t = text.strip().rstrip(" .")
-    return t.endswith("?") or "soll ich" in t.lower()
+    return bool(re.search(r"\?[!\"'”»)]*$", t)) or "soll ich" in t.lower()
+
+
+def is_yes(text: str) -> bool:
+    """Zustimmung ("Ja", "genau", "okay", "leg los"), solange kein Nein/Warte darin vorkommt.
+    Auch fuer "Ja" waehrend ihrer Frage (soft_interrupt.py): "mhm" und "aha" sind keine Zustimmung."""
+    return bool(YES.match(text)) and not NO.search(text)
 
 
 def consent_index(messages: list[dict]) -> int | None:
@@ -47,13 +54,13 @@ def consent_index(messages: list[dict]) -> int | None:
     text = _text(messages[-1].get("content")).strip()
     if not text or CONSENT_NOTE in text or text.startswith("["):
         return None  # Systemhinweise (Pause, Unterbrechung, Freigabe) sind kein Ja
-    if not YES.match(text) or NO.search(text) or len(text.split()) > MAX_WORDS:
+    if not is_yes(text) or len(text.split()) > MAX_WORDS:
         return None
     for message in reversed(messages[:-1]):
         if message.get("role") == "assistant":
             said = _text(message.get("content"))
             if said.strip():
-                return len(messages) - 1 if _is_question(said) else None
+                return len(messages) - 1 if is_question(said) else None
             continue  # nur Werkzeugaufruf ohne Text: weiter zurueck
         return None  # dazwischen etwas anderes (z. B. Werkzeugergebnis): keine offene Frage
     return None

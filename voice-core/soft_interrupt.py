@@ -24,6 +24,7 @@ und der Server bricht playback_lag_secs spaeter ab, weil die Wort-Zeitstempel de
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from collections import deque
 from typing import Callable
@@ -52,6 +53,7 @@ from pipecat.turns.user_start.min_words_user_turn_start_strategy import (
     MinWordsUserTurnStartStrategy,
 )
 
+from consent import is_question, is_yes
 from playback import AudioHold
 
 SENTENCE_END = (".", "!", "?", "…", ":")
@@ -98,6 +100,29 @@ def is_stop_request(text: str) -> bool:
     return any(w in STOP_WORDS for w in _words(text))
 
 
+# Fragebeginn mitten im Satz, bevor das Fragezeichen erklingt: "Darf ich ...", "Moechtest du ..."
+ASK_START = re.compile(
+    r"^\W*(soll|sollen|darf|duerfen|dürfen|kann|koennen|können|will|willst|wollen|moechte|möchte|"
+    r"moechtest|möchtest|moechten|möchten|magst|mag)\w*\s+(ich|du|wir|er|sie)\b",
+    re.IGNORECASE,
+)
+
+
+def asks_so_far(sentence: str) -> bool:
+    """Ist der Satz, so weit er erklungen ist, eine Frage? Das Fragezeichen fehlt noch, also zaehlt der
+    Fragebeginn ("Soll ich", "Darf ich", "Moechtest du")."""
+    return is_question(sentence) or bool(ASK_START.match(sentence))
+
+
+# "Ja, aber ...", "Ja?", "Bitte?": beginnen mit Zustimmung, sind aber keine Antwort auf ihre Frage.
+NOT_AN_ANSWER = re.compile(r"\b(aber|lieber|sondern|statt)\b|\?\W*$", re.IGNORECASE)
+
+
+def is_answer(text: str) -> bool:
+    """Eine Antwort auf ihre Frage ("Ja", "genau", "okay"), kein Zuhoeren ("mhm") und keine Nachfrage."""
+    return is_yes(text) and not NOT_AN_ANSWER.search(text)
+
+
 class MeaningfulWordsUserTurnStartStrategy(MinWordsUserTurnStartStrategy):
     """Wie MinWords, aber waehrend nieeeki spricht oder arbeitet zaehlen Rueckmeldelaute nicht mit.
 
@@ -108,17 +133,24 @@ class MeaningfulWordsUserTurnStartStrategy(MinWordsUserTurnStartStrategy):
     Dieselben Regeln gelten, solange ein Werkzeug laeuft und kurz danach, bis ihre Antwort beginnt:
     ein "okay" auf ihr "Moment." (fillers.py) wuerde sonst als neuer Satz das Werkzeug abbrechen.
     Sonst startet wie bisher jedes Wort den Turn.
+
+    Ausnahme, nur solange sie spricht und gerade fragt (asking): Ein "Ja", "genau" oder "okay" ist dann die
+    Antwort und kein Rueckmeldelaut (is_answer). Es unterbricht wie ein echter Einwurf und bleibt im
+    Transkript (04.11.2026: ein "Ja" mitten in ihrer Frage ging sonst verloren). "mhm" und "aha" bleiben
+    Zuhoeren, ebenso "Ja, aber ...", "Ja?" und "Bitte?".
     """
 
     def __init__(
         self,
         *,
         on_partial: Callable[[str], None] | None = None,
+        asking: Callable[[], bool] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         **kwargs,
     ):
         super().__init__(**kwargs)
         self._on_partial = on_partial
+        self._asking = asking
         self._now = monotonic
         self._tools: set[str] = set()
         self._answer_due_until = 0.0  # Werkzeuge fertig, ihre Antwort kommt gleich
@@ -147,6 +179,10 @@ class MeaningfulWordsUserTurnStartStrategy(MinWordsUserTurnStartStrategy):
         count = meaningful_word_count(frame.text)
         if count >= self._min_words or is_stop_request(frame.text):
             logger.debug(f"{self}: Einwurf erkannt ({frame.text!r})")
+            await self.trigger_user_turn_started()
+            return ProcessFrameResult.STOP
+        if self._bot_speaking and self._asking and self._asking() and is_answer(frame.text):
+            logger.info(f"{self}: Antwort auf ihre Frage ({frame.text.strip()!r})")
             await self.trigger_user_turn_started()
             return ProcessFrameResult.STOP
         if count and self._bot_speaking and self._on_partial:
@@ -186,6 +222,8 @@ class SoftInterruptGate(FrameProcessor):
         self._firing = False  # Grenze gefunden, Unterbrechung laeuft
         self._armed_at = 0.0
         self._last_word_ended_sentence = False
+        self._sentence: list[str] = []  # Woerter des Satzes, den sie gerade spricht (nur was erklungen ist)
+        self._question_done = False  # der zuletzt zu Ende gesprochene Satz war eine Frage
         self._words_left = 0  # so viele Woerter darf sie nach dem Einwurf noch sprechen (ohne Hold)
         # Innehalten: Nikolaj setzt an (ein Wort), sie haelt an der naechsten Wortgrenze inne
         self._hint_since: float | None = None
@@ -214,6 +252,7 @@ class SoftInterruptGate(FrameProcessor):
         if isinstance(frame, BotStartedSpeakingFrame):
             self._bot_speaking = True
             self._last_word_ended_sentence = False
+            self._sentence, self._question_done = [], False
             self._resumed_text = ""
             self._clear_hint(resume=True)
         elif isinstance(frame, BotStoppedSpeakingFrame):
@@ -300,7 +339,24 @@ class SoftInterruptGate(FrameProcessor):
             self._pause("Wortgrenze")
             return HOLD
         self._last_word_ended_sentence = text.rstrip().endswith(SENTENCE_END)
+        self._track_sentence(text)
         return PLAY
+
+    def _track_sentence(self, text: str):
+        """Merkt sich, ob der Satz, den sie gerade spricht oder zuletzt beendet hat, eine Frage ist.
+        Das Satzende erkennt es selbst (auch hinter schliessenden Anfuehrungszeichen: ?"). Abkuerzungen mit
+        Punkt ("ca.") beenden den Satz hier ebenfalls; das kostet hoechstens ein "Ja" mitten in so einer Frage."""
+        self._sentence.append(text.strip())
+        if text.rstrip().rstrip("\"'”»)").endswith(SENTENCE_END):
+            self._question_done = is_question(" ".join(self._sentence))
+            self._sentence = []
+
+    def asking(self) -> bool:
+        """Fragt sie gerade? Nach den Woertern, die schon erklungen sind: mitten im Satz zaehlt nur ein
+        erkennbarer Fragebeginn ("Soll ich", "Darf ich"), am Satzende das Fragezeichen. Folgt nach der
+        Frage eine Aussage, ist die Frage vorbei."""
+        partial = " ".join(self._sentence)
+        return asks_so_far(partial) if partial else self._question_done
 
     def on_word_played(self, text: str) -> bool:
         """Alte Schnittstelle: True = abgeschnitten."""
