@@ -5,7 +5,7 @@ Ausfuehren:  uv run python -m unittest -v test_consent.py   (im Ordner voice-cor
 
 import unittest
 
-from consent import CONSENT_NOTE, consent_index, mark_consent
+from consent import CONSENT_NOTE, consent_index, is_question, is_yes, mark_consent
 
 FRAGE = {"role": "assistant", "content": "● Also: ein Repository namens Test anlegen und klonen. Soll ich das so machen?"}
 
@@ -16,6 +16,28 @@ class Context:
 
     def set_messages(self, messages):
         self.messages = messages
+
+
+class WortTests(unittest.TestCase):
+    """is_yes und is_question sind auch die Grundlage fuer "Ja" waehrend ihrer Frage (soft_interrupt.py)."""
+
+    def test_zustimmung(self):
+        for text in ["Ja", " ja genau", "Okay", "Klar", "Jo.", "mach", "leg los", "Ja, mach das."]:
+            with self.subTest(text=text):
+                self.assertTrue(is_yes(text))
+
+    def test_keine_zustimmung(self):
+        for text in ["mhm", "aha", "Nein", "Ja, aber nicht dort", "Warte mal", "Leg das an", "", "J"]:
+            with self.subTest(text=text):
+                self.assertFalse(is_yes(text))
+
+    def test_frage_erkennen(self):
+        for text in ["Soll ich das so machen?", "Soll ich Chrome oeffnen", "Passt das?"]:
+            with self.subTest(text=text):
+                self.assertTrue(is_question(text))
+        for text in ["Erledigt, das Repository liegt im Projekte-Ordner.", "Ich oeffne Chrome", ""]:
+            with self.subTest(text=text):
+                self.assertFalse(is_question(text))
 
 
 class ConsentTests(unittest.TestCase):
