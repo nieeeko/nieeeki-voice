@@ -74,25 +74,49 @@ Voice-Core prüft die Signatur. Bis dahin bleibt der neue Weg ein Zusatz, nicht 
   Neuverhandlung wirklich auf (messen, nicht ableiten)? (c) Wie lange darf eine Vercel-Funktion warten (Plan und
   Limit prüfen, nicht geprüft)? (d) Kann der Voice-Core `ask_to_renegotiate` mit Test abschalten
   (`enableCam:false`)? Das wäre ein Monkeypatch.
-- **Ergebnis:** Befund mit Codeverweisen; Tabellenform und Proxy hängen davon ab. **Modell:** Standard.
+- **Ergebnis (erledigt 04.11.2026, aus dem Paketcode belegt, small-webrtc-transport 1.11.0, Pipecat 1.12):**
+  Der Client schickt nur **POST-Offers** `{sdp, type, pc_id, restart_pc, requestData}` (`index.module.js:2989-3006`),
+  die Antwort ist `{sdp, type, pc_id}`. Die ICE-Kandidaten stecken im Offer, wenn der Transport mit
+  `waitForICEGathering: true` gebaut wird (Standard `false`; er wartet höchstens 2 s, `:2979`). Die PATCH-Anfragen
+  mit `{pc_id, candidates}` (`:2950-2962`) schickt er nach der Antwort, ein Fehler dabei wird nur geloggt; der Proxy
+  beantwortet sie also ohne Datenbank. Ein **4xx** auf das Offer beendet den Client sofort (`isOfferRefused`,
+  `:3022`), ein 5xx oder Timeout lässt ihn nach 2 s neu versuchen. Neuverhandlung und ICE-Neustart sind weitere
+  POST-Offers mit `pc_id` bzw. `restart_pc: true` (`:2852-2860`, `:2989-2994`). Serverseitig akzeptiert
+  `SmallWebRTCRequest.from_dict` beide Schreibweisen (`requestData`/`request_data`), der Runner reicht sie als
+  `runner_args.body` an den Bot (`run.py:1013-1022`). Damit genügt eine Tabelle für Offers (Fragen a, c, d aus
+  dem Review geklärt). Offen bleibt (b): Wie oft die Neuverhandlung wirklich auftritt, misst Schritt 7.
+  **Modell:** Standard.
 
-### 2. Migration `0002_signalisierung` (Abhängigkeit: 1)
-- **Tabellen:** `voice_signals` (jede Anfrage eine Zeile: `user_id`, `kind` `offer|patch`, `pc_id`, `restart_pc`,
-  `body`, `offer`, `answer`, `status`, `created_at`, `expires_at`) und `voice_ice` (rotierende, kurzlebige
-  ICE-Zugangsdaten: nur lesbar für den Owner).
-- **Rechte:** `authenticated` bekommt spaltenweise nur `select` und `insert (kind, pc_id, restart_pc, body,
-  offer)`, kein `update`/`delete`. Die Grants aus `0001` gelten nur für damals vorhandene Tabellen; Default
-  Privileges gibt es nur für `service_role`. `status`, `created_at`, `expires_at` nur per Default,
-  `check (expires_at <= created_at + interval '60 seconds')`.
-- **RLS:** RESTRICTIVE-Policy mit `(select auth.jwt()->>'aal') = 'aal2'` und Anmeldealter aus `amr` (höchstens 1
-  Tag). Der Voice-Core prüft zusätzlich `user_id = NIEEEKI_OWNER_ID`.
-- **Missbrauch:** höchstens eine offene Anfrage je Nutzer (partieller Unique-Index) und ein Rate-Limit-Trigger,
-  schon hier. Atomarer Claim per RPC oder bedingtem Update mit `now()` aus der Datenbank (gegen Doppelverarbeitung
-  und Uhrenabweichung). Nach dem Verbindungsaufbau `offer`, `answer`, ICE-Daten leeren (IPs, Zugangsdaten).
-  Aufräumen abgelaufener Zeilen: pg_cron (Verfügbarkeit nicht geprüft) oder der Voice-Core löscht.
-- **Weiteres:** Realtime-Publikation wie in `0001:270-277`; Index auf dem Fremdschlüssel `user_id`.
-- **Prüfen:** Angriffstests in DEV (anderer Nutzer, aal1, anon, fremde Zeile, zu langes `expires_at`,
-  zweite offene Anfrage, `\dp` für tatsächliche Rechte); `database-reviewer`; dann TEST; PROD mit Go.
+### 2. Migration `0002_signalisierung` (Abhängigkeit: 1) — Stand 04.11.2026: DEV und TEST angewendet
+- **Datei:** `supabase/migrations/0002_signalisierung.sql` und `.down.sql`. Tabelle `voice_signals` (`user_id` per
+  Default `auth.uid()`, `request` und `response` als jsonb, `status` `pending|claimed|answered|failed`,
+  `created_at`, `expires_at` höchstens 60 s). `voice_ice` kommt mit Schritt 3.
+- **Rechte:** `authenticated` darf nur lesen und `insert (request)`; kein Update, kein Delete, keine Spalten
+  `user_id`/`status`/`expires_at`. Die Rechte aus `0001` gelten nur für damals vorhandene Tabellen. RLS ist gleich
+  nach `create table` eingeschaltet, vor allen Rechten.
+- **RLS:** Profil-Gate wie `0001` (zwei Policies) plus eine RESTRICTIVE-Policy für alle Rollen: `aal2` und
+  Anmeldealter höchstens 1 Tag (frühester `amr`-Zeitstempel, nur echte Zahlen, wie `auth_gate.py`).
+  Der Voice-Core prüft zusätzlich `user_id = NIEEEKI_OWNER_ID`.
+- **Missbrauch:** Trigger je Nutzer serialisiert (Advisory-Lock): höchstens 6 Anfragen je Minute und 60 gespeicherte
+  Zeilen, sonst `PT429` (PostgREST macht daraus HTTP 429). `claim_voice_signal(p_user_id)` übernimmt atomar
+  (`for update skip locked`, Ablauf nach Datenbankuhr). `purge_voice_signals(interval)` räumt auf, nie jünger als 2
+  Minuten (Rate-Limit-Fenster), Standard 10 Minuten. Beide nur für `service_role`.
+- **Aufbewahrung:** Nach dem Verbindungsaufbau ersetzt der Voice-Core `request` durch einen Platzhalter
+  `{"sdp":"","type":"offer"}` und setzt `response` auf null, **löscht aber nicht sofort** (der Zähler sieht nur
+  vorhandene Zeilen); die Zeile geht per `purge_voice_signals`. Bewusst nicht in der Realtime-Publikation.
+- **Geprüft** (TEST, Datei exakt; DEV nachweislich strukturell identisch in Constraints, Policies, Funktionen,
+  Indizes, Tabellen-, Spalten- und Funktionsrechten, RLS): aal1, fremdes oder fehlendes Profil, anon, fremde
+  `user_id`, `status`/`expires_at` setzen, Update/Delete/Truncate-Rechte, Anmeldung 2 Tage alt, `amr` fehlt, Zeitstempel als
+  Text und `"NaN"`, sieben Formfehler (ohne `sdp`/`type`, falscher `type`, `sdp` kein Text oder null, kein
+  Objekt, über 32 KB), Zeilenflut als Schleife und als Array-Insert, Gesamtgrenze 60, `claim` nur für
+  `service_role` und genau einmal je Zeile, abgelaufene Zeilen nicht übernommen, `purge` nur für `service_role` mit
+  Mindestalter. Der Review (ECC `database-reviewer`) fand einen Blocker (Down-Reihenfolge) und drei wichtige Punkte
+  (Zähler sieht gelöschte Zeilen nicht, Race ohne Sperre, kein Aufräumen); alle behoben. Eigener Fund beim Test:
+  `CHECK` lässt `NULL` passieren, darum `coalesce` bei `type` und `sdp`.
+- **Noch nicht geprüft:** Der Rundlauf Down → Up. Der Supabase-Connector lehnt `drop table`/`drop function` in
+  dieser Sitzung ab; die Reihenfolge der Down-Datei ist begründet (Funktionen am Zeilentyp zuerst), aber nicht
+  ausgeführt. Vor PROD einmal in TEST mit Bestätigung laufen lassen. Ebenso offen: 20 parallele Inserts.
+- **Weiter:** PROD erst mit Nikolajs Go.
 - **Ausstieg:** `.down.sql`. **Modell:** stark.
 
 ### 3. ICE-Zugangsdaten vor dem ersten Offer (parallel zu 4; Abhängigkeit: 2, Schritt 0)
@@ -123,6 +147,10 @@ Voice-Core prüft die Signatur. Bis dahin bleibt der neue Weg ein Zusatz, nicht 
   realtime 2.65.2; ob behoben, nicht geprüft). Voraussetzung für Realtime ist außerdem, dass die Tabelle in der
   Publikation `supabase_realtime` steht, sonst kommen stumm keine Ereignisse. Im UI nach dem Abonnieren einmal
   direkt abfragen.
+- **Pflichten aus Schritt 2:** Übernahme über `claim_voice_signal(NIEEEKI_OWNER_ID)`; `purge_voice_signals()` beim
+  Start und etwa jede Minute; nach dem Verbindungsaufbau `request` durch den Platzhalter ersetzen und `response`
+  leeren (nicht löschen); `response` klein halten und bei Fehlern nie SDP loggen; eine **eigene Drossel im
+  Voice-Core**: höchstens ein Handler-Start gleichzeitig, auch wenn die Datenbank bis zu 6 Zeilen je Minute zulässt.
 - **Tests (zuerst):** abgelaufen, fremder Owner, doppelte Zeile, Handler-Fehler, Neuverhandlung, Neustart,
   Übernahme erst bei `connected`. **Ausstieg:** `NIEEEKI_RENDEZVOUS=0`. **Modell:** stark.
 
@@ -132,6 +160,12 @@ Voice-Core prüft die Signatur. Bis dahin bleibt der neue Weg ein Zusatz, nicht 
   ignorieren. Das Warten auf die Antwort bleibt unter einer Minute; Vercel erlaubt laut Doku (Stand Februar 2026)
   300 s auf Hobby und bis zu 800 s auf Pro, das reicht deutlich. Vercel braucht keine Geheimnisse. `useNieeeki.ts`: Umschalter `NEXT_PUBLIC_TRANSPORT=direkt|
   rendezvous` (Standard `direkt`), Fehlertext in `useNieeeki.ts:383` nennt noch Tailscale und wird angepasst.
+- **Vertrag des Proxys (aus Schritt 1 und 2):** Der Transport wird mit `waitForICEGathering: true` gebaut. POST
+  prüft den Body (nur `sdp`, `type: "offer"`, `pc_id`, `restart_pc`, `requestData` als bekannte Schlüssel, unter
+  32 KB) und legt `{request: <Body>}` als Nutzer an. Antwort der Datenbank `42501` wird 403, `PT429` wird 429, ein
+  Formfehler 400; das sind 4xx und beenden den Client sofort. Wartet die Route länger als 25 s, antwortet sie 504,
+  das ist ein 5xx und der Client versucht nach 2 s neu. PATCH beantwortet die Route mit 200, ohne Datenbank. Der
+  Client braucht ein Backoff, denn 6 Anfragen je Minute sind bei Mobilfunk-Flattern knapp.
 - **Prüfen:** UI-Build, Lint, Typen; REA-Prüfung des Bundles auf Geheimnisse.
 
 ### 6. Gerätebindung (Abhängigkeit: 5; vor dem Abschalten der Tailscale-Pflicht)
