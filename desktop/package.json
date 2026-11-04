@@ -28,6 +28,11 @@
         "to": "icon.ico"
       }
     ],
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false
+    },
     "win": {
       "target": "nsis",
       "icon": "icon.ico"
