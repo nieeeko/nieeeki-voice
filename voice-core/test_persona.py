@@ -7,7 +7,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from persona import BASE_PROMPT, build_system_prompt, pc_section
+from persona import BASE_PROMPT, build_system_prompt, channel_for, pc_section
+
+
+class KanalTests(unittest.TestCase):
+    """Der Kanal einer Sitzung (sessions.channel) kommt aus dem Body, aber nur ein bekannter Wert zaehlt."""
+
+    def test_bekannte_kanaele(self):
+        for kanal in ["phone", "web", "desktop"]:
+            with self.subTest(kanal=kanal):
+                self.assertEqual(channel_for({"kanal": kanal}, "standard"), kanal)
+
+    def test_alles_andere_ergibt_den_standard(self):
+        for body in [None, {}, [], "phone", {"kanal": "root"}, {"kanal": ""}, {"kanal": 5}, {"kanal": None}, {"anlass": "weckwort"}]:
+            with self.subTest(body=str(body)):
+                self.assertEqual(channel_for(body, "standard"), "standard")
 
 
 class PcTests(unittest.TestCase):

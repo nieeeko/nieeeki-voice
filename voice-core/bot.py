@@ -64,7 +64,7 @@ from pipecat.transports.base_transport import TransportParams
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from memory import MemoryStore
-from persona import build_system_prompt, greeting_for, pc_section
+from persona import build_system_prompt, channel_for, greeting_for, pc_section
 from activity import ActivityReporter
 from auth_gate import allow_preview_origins, install_owner_gate
 from session_guard import SingleSession
@@ -87,6 +87,7 @@ from soft_interrupt import (
 )
 from voice_gate import SpeakerVerifier, VoiceGate, gate_schemas, install_tool_gate, watch_typed_text
 from voiceprint import VoiceModel, from_vector, to_vector
+from rendezvous import install_rendezvous
 
 load_dotenv(override=True)
 take_oauth_token()  # Abo-Token nur fuer Claude Code aufbewahren, nicht an andere Unterprozesse vererben
@@ -541,6 +542,9 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(_transport, _client):
+        # Gespraech uebernehmen, jetzt steht die Verbindung wirklich. Auf dem direkten Weg hat bot() schon
+        # uebernommen (take ist idempotent); Handy-Sitzungen ueber das Rendezvous tun es erst hier.
+        await session.take(getattr(runner_args, "webrtc_connection", None))
         # Kurze Begruessung waermt die Sprachausgabe auf: der erste Soniox-Satz einer
         # Verbindung brauchte einmal 10 s. Leer setzen, um sie abzuschalten.
         greeting = greeting_for(runner_args.body, NIEEEKI_GREETING, NIEEEKI_WAKE_GREETING)
@@ -551,7 +555,9 @@ async def run_bot(transport, runner_args: RunnerArguments) -> None:
         _background_tasks.add(prepare)
         prepare.add_done_callback(_background_tasks.discard)
         # Sitzung erst nach der Begruessung anlegen (Supabase-Insert kostete ~0,6 s vor dem ersten Ton)
-        await memory.start_session(channel=os.getenv("NIEEEKI_CHANNEL", "web"))
+        # Handy-Sitzungen ueber das Rendezvous tragen den Kanal "phone" im Body (den setzt rendezvous.py selbst);
+        # sonst zaehlt nur ein bekannter Wert (persona.channel_for)
+        await memory.start_session(channel=channel_for(runner_args.body, os.getenv("NIEEEKI_CHANNEL", "web")))
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(_transport, _client):
@@ -572,7 +578,10 @@ session = SingleSession()  # nur ein Gespraech gleichzeitig (session_guard.py)
 
 async def bot(runner_args: RunnerArguments):
     connection = getattr(runner_args, "webrtc_connection", None)
-    await session.take(connection)
+    # Handy-Sitzungen ueber das Rendezvous (Kanal "phone") uebernehmen erst bei echtem "connected"
+    # (on_client_connected in run_bot): Ein blosses Offer darf kein laufendes Gespraech trennen.
+    if channel_for(getattr(runner_args, "body", None), "") != "phone":
+        await session.take(connection)
     try:
         transport = await create_transport(runner_args, transport_params)
         await run_bot(transport, runner_args)
@@ -595,4 +604,7 @@ if __name__ == "__main__":
     allow_preview_origins(runner)
     # Und auch von dort nur Nikolaj: Supabase-Login mit zweitem Faktor (auth_gate.py).
     install_owner_gate(app)
+    # Weg B (Plan online-ohne-tailscale): Offers aus Supabase holen statt HTTP anzunehmen. Nur mit
+    # NIEEEKI_RENDEZVOUS=1; bot ist hier die Funktion aus __main__ (ein zweiter Import haette eine eigene SingleSession).
+    install_rendezvous(app, bot)
     main()
