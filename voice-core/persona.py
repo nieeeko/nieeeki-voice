@@ -131,6 +131,16 @@ def greeting_for(body: object, normal: str, wake: str) -> str:
     return wake if isinstance(body, dict) and body.get("anlass") == "weckwort" else normal
 
 
+CHANNELS = frozenset({"web", "desktop", "phone"})  # wie sessions.channel in Migration 0001
+
+
+def channel_for(body: object, default: str) -> str:
+    """Kanal der Sitzung: bei Sitzungen ueber das Rendezvous (Handy) "phone", sonst der Standard.
+    Nur bekannte Werte zaehlen, was ein Client sonst im Body schickt, landet nie in der Datenbank."""
+    kanal = body.get("kanal") if isinstance(body, dict) else None
+    return kanal if isinstance(kanal, str) and kanal in CHANNELS else default
+
+
 MAX_PROJECTS = 40
 
 

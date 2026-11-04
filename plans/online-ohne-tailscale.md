@@ -134,8 +134,28 @@ Voice-Core prüft die Signatur. Bis dahin bleibt der neue Weg ein Zusatz, nicht 
   einen Timeout.
 - **Prüfen:** Test mit gefälschtem Anbieter; Schlüssel nie im Log; Ablauf und Erneuerung.
 
-### 4. Rendezvous im Voice-Core (Abhängigkeit: 2)
-- **Aufgaben:** `voice-core/rendezvous.py` beobachtet ausgehend `voice_signals`. Es darf **nicht** `import bot`
+### 4. Rendezvous im Voice-Core (Abhängigkeit: 2) — Stand 04.11.2026: gebaut, getestet, Schalter aus
+- **Gebaut:** `voice-core/rendezvous.py` (+ `test_rendezvous.py`, 66 Tests, darunter echter aiortc-Client gegen den
+  echten Pipecat-Handler), Einhängen in `bot.py` (`install_rendezvous(app, bot)` im `__main__`-Block), Kanal `phone`
+  über `persona.channel_for`. **Aus**, solange `NIEEEKI_RENDEZVOUS` nicht gesetzt ist; ohne Geräteschlüssel zusätzlich
+  nur mit `NIEEEKI_RENDEZVOUS_UNBOUND=1` (bewusste Zustimmung). Einstellungen in `voice-core/.env.example`.
+- **Aus dem Review (ECC `python-reviewer`) behoben:** (B1) `bot()` übernimmt bei Handy-Sitzungen erst in
+  `on_client_connected`, nicht schon beim Offer: Sonst hätte ein einziges gültiges Offer ein laufendes Gespräch am
+  Laptop getrennt. (W1) Fehlendes `purge` blockiert das Abholen nicht mehr, Pause wächst bei Dauerfehlern bis 30 s.
+  (W2) Scheitert etwas nach dem Anlegen der Verbindung (Handler, Antwort schreiben), werden Verbindung und
+  `bot()`-Task verworfen, die Antwort wird einmal wiederholt. (W3) Abbruch mitten in der Zeile schreibt den Kurzcode
+  `abbruch` (5xx). (W4) Pipecat loggt bei Handler-Fehlern selbst das SDP: ein loguru-Patcher ersetzt beide Stellen,
+  per echtem Handler mit erzwungenem Fehler belegt. (W5) `close()` schließt den Handler, bricht Wächter sofort ab und
+  hält das Beenden nie länger als 3 s je Schritt auf (gemessen: vorher 3 s Wartezeit auf Wächter).
+- **Eigene Funde beim Testen:** aiortc nimmt auch ein kaputtes SDP ohne Fehler an und antwortet (harmlos: keine
+  Verbindung, der Wächter verwirft sie nach 30 s); eine unbekannte `pc_id` legt eine neue Verbindung an.
+- **Korrektur zur Aufbewahrung (gilt statt der Zeile in Schritt 2):** Das Offer wird mit der Antwort durch den
+  Platzhalter ersetzt, die **Antwort bleibt** (der Proxy muss sie lesen) bis `purge_voice_signals` (180 s, nicht
+  10 Minuten). Sie enthält die Adressen des Laptops. `response` kann wegen `voice_signals_answer_chk` nicht auf null.
+- **Noch offen:** Das Schreiben der Antwort gegen die echte Datenbank (nur MockTransport getestet): kleiner
+  Live-Test gegen TEST (claim, answer, zweites answer = `[]`, purge). Kein Vergleich von `created_at` mit der
+  Laptop-Uhr (eine falsch gehende Uhr würde sonst alles ablehnen); eine zu alte Zeile endet über den Wächter.
+- **Ursprüngliche Aufgabenliste:** `voice-core/rendezvous.py` beobachtet ausgehend `voice_signals`. Es darf **nicht** `import bot`
   aufrufen (zweite `SingleSession`, zwei parallele Gespräche); `bot` kommt aus `__main__`, der Lauscher startet
   über den Lifespan von `app`. Jede Zeile ist ein Offer: ohne `pc_id` neues `bot()` als Task mit fester
   Referenz, mit `pc_id` (Neuverhandlung) oder `restart_pc` derselbe Handler, ohne neues `bot()`. Eigener
@@ -154,8 +174,15 @@ Voice-Core prüft die Signatur. Bis dahin bleibt der neue Weg ein Zusatz, nicht 
 - **Tests (zuerst):** abgelaufen, fremder Owner, doppelte Zeile, Handler-Fehler, Neuverhandlung, Neustart,
   Übernahme erst bei `connected`. **Ausstieg:** `NIEEEKI_RENDEZVOUS=0`. **Modell:** stark.
 
-### 5. Oberfläche: Proxy `/api/rtc` und Umschalter (Abhängigkeit: 1, 3, 4)
-- **Aufgaben:** Route Handler `ui/src/app/api/rtc/route.ts` auf derselben Domain. POST: Zeile mit dem Nutzer-Token
+### 5. Oberfläche: Proxy `/api/rtc` und Umschalter (Abhängigkeit: 1, 3, 4) — Stand 04.11.2026: gebaut, Umschalter aus
+- **Gebaut:** `ui/src/app/api/rtc/route.ts` (dünn) und `ui/src/lib/rtcProxy.ts` (Logik, 15 Tests mit dem eingebauten
+  Node-Test-Runner, `npm test`), Umschalter `NEXT_PUBLIC_TRANSPORT=rendezvous` in `useNieeeki.ts` (Standard: direkt wie
+  bisher), STUN nur aus `NEXT_PUBLIC_ICE_SERVERS` und nur `stun:`-Adressen (TURN-Zugangsdaten würden dort öffentlich).
+  Webpack-Build grün (Turbopack löst eine Junction außerhalb des Arbeitsbereichs nicht auf, kein Codefehler). Fund
+  beim Bauen: Mit `cacheComponents` ist `export const dynamic` in der Route nicht erlaubt. Kein Geheimnis in Vercel.
+- **Noch offen:** Nie mit einem echten Browser und echtem Handy ausprobiert (Schritt 7). Ob der Transport nach einem
+  4xx wirklich sofort aufgibt, ist aus dem Paketcode belegt, nicht gemessen.
+- **Ursprüngliche Aufgabenliste:** Route Handler `ui/src/app/api/rtc/route.ts` auf derselben Domain. POST: Zeile mit dem Nutzer-Token
   und dem Publishable Key anlegen (RLS prüft), auf die Antwort warten, zurückgeben. PATCH: annehmen oder
   ignorieren. Das Warten auf die Antwort bleibt unter einer Minute; Vercel erlaubt laut Doku (Stand Februar 2026)
   300 s auf Hobby und bis zu 800 s auf Pro, das reicht deutlich. Vercel braucht keine Geheimnisse. `useNieeeki.ts`: Umschalter `NEXT_PUBLIC_TRANSPORT=direkt|
@@ -168,8 +195,23 @@ Voice-Core prüft die Signatur. Bis dahin bleibt der neue Weg ein Zusatz, nicht 
   Client braucht ein Backoff, denn 6 Anfragen je Minute sind bei Mobilfunk-Flattern knapp.
 - **Prüfen:** UI-Build, Lint, Typen; REA-Prüfung des Bundles auf Geheimnisse.
 
-### 6. Gerätebindung (Abhängigkeit: 5; vor dem Abschalten der Tailscale-Pflicht)
-- **Aufgaben:** Passkey/WebAuthn je Sitzungsstart oder Geräteschlüssel, der Zeilen-ID, Offer-Hash und Zeit
+### 6. Gerätebindung (Abhängigkeit: 5; vor dem Abschalten der Tailscale-Pflicht) — Nikolaj: Geräteschlüssel, nicht Passkey
+- **Entwurf (noch nicht gebaut):** Das Handy erzeugt einmal ein ECDSA-P-256-Schlüsselpaar mit WebCrypto
+  (`extractable: false`, im IndexedDB des Browsers; der private Schlüssel verlässt das Gerät nie). Bei jedem Offer
+  signiert ein kleiner `fetch`-Wrapper nur für `/api/rtc` die Zeichenkette `<Zeitstempel>.<SHA-256 des SDP>` und
+  schickt Signatur und Zeitstempel als Header (der Transport selbst bietet dafür keinen Haken, Header sind dort
+  statisch). Der Proxy nimmt beide in `request` auf (neue erlaubte Schlüssel `sig`, `ts`, in Migration und
+  `validate_offer` ergänzen: eine neue Migration `0003`, nicht `0002` ändern). Der Voice-Core ist der `verifier` von
+  `Rendezvous`: Er prüft Signatur gegen die hinterlegten öffentlichen Schlüssel, Zeitstempel höchstens 60 s alt
+  (gegen die Uhr der Datenbank-Zeile `created_at`, nicht die Laptop-Uhr) und den SDP-Hash. Ein gestohlenes Token ohne
+  Geräteschlüssel scheitert damit an `geraet` (4xx).
+- **Einrichten (nur Nikolaj, nur am Laptop):** In der Desktop-App (localhost, dort gilt `auth_gate`) „Handy koppeln“:
+  Das Handy zeigt seinen öffentlichen Schlüssel als QR-Code oder kurzen Code, der Laptop trägt ihn in eine Liste ein
+  (Datei oder Tabelle, nur `service_role`). Entfernen genauso. Mehrere Geräte möglich, Liste klein halten.
+- **Offene Entscheidung:** Browser ohne IndexedDB-Persistenz (privater Modus) verlieren den Schlüssel: dann neu
+  koppeln. Safari löscht Webseitendaten bei 7 Tagen ohne Nutzung (nicht geprüft für als App installierte
+  Startbildschirm-Seiten).
+- **Ursprüngliche Aufgabenliste:** Passkey/WebAuthn je Sitzungsstart oder Geräteschlüssel, der Zeilen-ID, Offer-Hash und Zeit
   signiert; der Voice-Core prüft die Signatur gegen den bei der Einrichtung hinterlegten Schlüssel (nur Nikolaj
   richtet ein, nur am Laptop). Ohne gültige Signatur startet nichts, auch mit gültigem Token.
 - **Prüfen:** Test „gestohlenes Token ohne Gerät" scheitert. `security-reviewer`, `agent-security-hardening`.
