@@ -101,6 +101,13 @@ Voice-Core prüft die Signatur. Bis dahin bleibt der neue Weg ein Zusatz, nicht 
   UDP-TURN-URL, dazu eine STUN-URL (aiortc nimmt nur je den ersten Eintrag). Lebensdauer länger als ein
   Gespräch oder Erneuerung; ein ICE-Neustart baut mit den alten Daten neu auf. Alternative zur Tabelle: Variante
   mit zwei Phasen (Anfrage, dann ICE-Daten, dann Offer), kostet eine Runde mehr.
+- **Anbieter-Kandidat Cloudflare Realtime TURN** (recherchiert, siehe unten): `POST
+  https://rtc.live.cloudflare.com/v1/turn/keys/{KEY_ID}/credentials/generate-ice-servers` mit `{"ttl": Sekunden}`
+  und dem API-Token als Bearer liefert `iceServers` (STUN plus TURN mit UDP 3478/443, TCP 3478/80, TLS 5349/443;
+  die UDP-URLs stehen zuerst). Vorzeitiger Widerruf per `.../credentials/{username}/revoke`. Der TURN-Schlüssel ist
+  ein langlebiges Geheimnis und gehört nur in die `.env` des Voice-Cores. Grenzen für `ttl` nennt die Doku nicht
+  (im Test ausprobieren). Port 53 meiden: Browser blockieren ihn, ohne Trickle-ICE läuft der Aufbau sonst in
+  einen Timeout.
 - **Prüfen:** Test mit gefälschtem Anbieter; Schlüssel nie im Log; Ablauf und Erneuerung.
 
 ### 4. Rendezvous im Voice-Core (Abhängigkeit: 2)
@@ -110,15 +117,20 @@ Voice-Core prüft die Signatur. Bis dahin bleibt der neue Weg ein Zusatz, nicht 
   Referenz, mit `pc_id` (Neuverhandlung) oder `restart_pc` derselbe Handler, ohne neues `bot()`. Eigener
   `SmallWebRTCRequestHandler`, nicht `ConnectionMode.SINGLE`. `body` (Begrüßung) und Kanal (`phone`) kommen aus
   der Zeile. Übernahme eines laufenden Gesprächs erst bei `connected`; identische Offers per Hash abweisen.
-- **Abfrage:** Im `.venv` fehlt ein Realtime-Client. Entweder neue Abhängigkeit oder Abfrage alle 2 s (im Mittel
-  etwa 1 s je Runde, doppelt mit Neuverhandlung). Im UI nach dem Abonnieren einmal direkt abfragen.
+- **Abfrage:** Im `.venv` fehlt ein Realtime-Client. **Zuerst Abfrage alle 2 s** (robust, im Mittel etwa 1 s je
+  Runde, doppelt mit Neuverhandlung), Realtime erst später als Optimierung: Für supabase-py gibt es einen
+  gemeldeten Fehler, bei dem ein asynchrones `subscribe` nie `SUBSCRIBED` erreicht (Issue #1319, supabase-py 2.24.0 /
+  realtime 2.65.2; ob behoben, nicht geprüft). Voraussetzung für Realtime ist außerdem, dass die Tabelle in der
+  Publikation `supabase_realtime` steht, sonst kommen stumm keine Ereignisse. Im UI nach dem Abonnieren einmal
+  direkt abfragen.
 - **Tests (zuerst):** abgelaufen, fremder Owner, doppelte Zeile, Handler-Fehler, Neuverhandlung, Neustart,
   Übernahme erst bei `connected`. **Ausstieg:** `NIEEEKI_RENDEZVOUS=0`. **Modell:** stark.
 
 ### 5. Oberfläche: Proxy `/api/rtc` und Umschalter (Abhängigkeit: 1, 3, 4)
 - **Aufgaben:** Route Handler `ui/src/app/api/rtc/route.ts` auf derselben Domain. POST: Zeile mit dem Nutzer-Token
   und dem Publishable Key anlegen (RLS prüft), auf die Antwort warten, zurückgeben. PATCH: annehmen oder
-  ignorieren. Vercel braucht keine Geheimnisse. `useNieeeki.ts`: Umschalter `NEXT_PUBLIC_TRANSPORT=direkt|
+  ignorieren. Das Warten auf die Antwort bleibt unter einer Minute; Vercel erlaubt laut Doku (Stand Februar 2026)
+  300 s auf Hobby und bis zu 800 s auf Pro, das reicht deutlich. Vercel braucht keine Geheimnisse. `useNieeeki.ts`: Umschalter `NEXT_PUBLIC_TRANSPORT=direkt|
   rendezvous` (Standard `direkt`), Fehlertext in `useNieeeki.ts:383` nennt noch Tailscale und wird angepasst.
 - **Prüfen:** UI-Build, Lint, Typen; REA-Prüfung des Bundles auf Geheimnisse.
 
@@ -148,13 +160,29 @@ schreibt `room_url` und `user_token` in eine Zeile. `pipecat-ai[daily]`, `transp
 Video-Ausgang, `AudioHold` und Video-Ausgang neu prüfen, Oberfläche wechselt auf `@pipecat-ai/daily-transport`.
 Gerätebindung (Schritt 6) bleibt Pflicht. Vorab klären, dass der Bildschirm über den Anbieter laufen darf.
 
+## Recherche vom 04.11.2026 (Web, nicht am eigenen System getestet)
+- **Cloudflare Realtime TURN:** Abrechnung nach Ausgang, 0,05 US-Dollar je GB; die ersten 1000 GB je Monat sind
+  frei (gemeinsames Kontingent mit dem SFU-Produkt); STUN ist frei und unbegrenzt. Eigene Überschlagsrechnung,
+  nicht gemessen: Ein Bildschirm-Stream mit 2 MBit/s sind etwa 0,9 GB je Stunde, 1000 GB reichen also für gut 1000
+  Stunden, Sprache allein ist vernachlässigbar. Voraussetzung ist ein Cloudflare-Konto (der DNS bleibt bei Hostinger).
+  Quellen: [Preise](https://developers.cloudflare.com/realtime/pricing/),
+  [Zugangsdaten erzeugen](https://developers.cloudflare.com/realtime/turn/generate-credentials/).
+- **Vercel-Funktionen:** Mit Fluid Compute gelten laut Doku (Stand Februar 2026) 300 s Standard und Höchstwert auf
+  Hobby, 300 s Standard und 800 s Höchstwert auf Pro. Der Signalisierungs-Proxy braucht unter einer Minute.
+  Quelle: [Vercel, Funktionsdauer](https://vercel.com/docs/functions/limitations).
+- **Supabase Realtime in Python:** gemeldeter Fehler beim asynchronen Abonnieren
+  ([supabase-py #1319](https://github.com/supabase/supabase-py/issues/1319)), Behebungsstand unbekannt; deshalb
+  beginnt der Plan mit Abfrage alle 2 s. Tabellen müssen in `supabase_realtime` stehen
+  ([Doku Postgres Changes](https://supabase.com/docs/guides/realtime/postgres-changes)).
+
 ## Nicht geprüft
 Realtime `postgres_changes` zusammen mit `auth.jwt()->>'aal'` in RLS zur Laufzeit; pg_cron; tatsächliche Default
-Privileges in der Datenbank; TURN-Anbieter (Lebensdauer, Widerruf, Preis); Daily (SFU oder P2P, Verschlüsselung);
-Laufzeitgrenzen von Vercel-Funktionen; IPv6 und UDP im Mobilfunk; heutiger Wert von `NEXT_PUBLIC_VOICE_CORE_URL`
-auf Vercel.
+Privileges in der Datenbank; Cloudflare: Grenzen für `ttl`, Verhalten bestehender Verbindungen nach Ablauf oder
+Widerruf; Daily (SFU oder P2P, Verschlüsselung); IPv6 und UDP im Mobilfunk; heutiger Wert von
+`NEXT_PUBLIC_VOICE_CORE_URL` auf Vercel.
 
 ## Offene Fragen an Nikolaj
 1. Weg B (empfohlen) oder A?
 2. Gerätebindung: Passkey (Handy und Laptop) oder eigener Geräteschlüssel? Ohne sie bleibt Tailscale Pflicht.
-3. TURN-Anbieter: Konto bei einem Anbieter mit kurzlebigen Zugangsdaten anlegen.
+3. TURN-Anbieter: Cloudflare Realtime TURN (Konto anlegen, TURN-Schlüssel erzeugen) ist der Kandidat; ein
+   Datenschutz-OK für das Relay (Metadaten, keine Inhalte) wäre vorab nötig.
