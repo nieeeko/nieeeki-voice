@@ -79,6 +79,30 @@ nieeeki als App auf dem iPhone (ohne App Store).
   Anmeldung, laufen aber nie gleichzeitig (die zweite holt nur das Fenster der ersten nach vorn).
 - War „Mit Windows starten“ bei der Entwicklungs-App an, übernimmt die installierte App den Autostart.
 - Ohne Installer: `scripts\nieeeki-desktop.cmd` (startet Voice-Core und Oberfläche selbst).
+- Gehärtet (04.11.2026, Prüfung des fertigen Installers mit REA): `RunAsNode`, `--inspect` und `NODE_OPTIONS`
+  sind abgeschaltet (Electron-Fuses, `electronFuses` in `desktop/package.json`). Sonst könnte jedes lokale
+  Programm `nieeeki.exe` als Node-Interpreter oder mit Debugger starten und unter ihrem Namen Code ausführen.
+  Das `app.asar` enthält nur `main.js`, `preload.js`, `overlay.*` und `package.json`, keine `.env` und keine
+  Schlüssel; das Produktions-Bundle der Oberfläche nur den öffentlichen Publishable Key. Nach jedem Neubau
+  prüfen: REA `inspect_electron_fuses` auf `desktop\dist\win-unpacked\nieeeki.exe`. Noch offen: Asar-Integrität
+  (`enableEmbeddedAsarIntegrityValidation`, `onlyLoadAppFromAsar`), dafür erst den installierten Start testen.
+
+## Eigene Stimme (Soniox-Voice-Cloning)
+
+nieeeki spricht mit der Soniox-Stimme aus `SONIOX_VOICE` (Standard `Lena`). Eine geklonte Stimme ist dort
+nur eine UUID, im Voice-Core ist nichts umzubauen.
+
+1. Aufnahme: 1 bis 2 Minuten, nur du, ruhiger Raum, ein Mikrofon, gleichbleibender Ton (Tempo, Akzent, Atmung
+   und Nebengeräusche werden mitgeklont). Länger als 2 Minuten oder über 35 MB schlägt fehl.
+2. In der [Soniox Console](https://console.soniox.com) unter **Voices** → **Create voice**: Aufnahme hochladen,
+   eindeutigen Namen vergeben, warten bis der Play-Knopf geht (wenige Sekunden). Ein fehlgeschlagenes Voice
+   ist endgültig: Aufnahme korrigieren und neu anlegen. Limit: 20 Stimmen je Organisation.
+3. UUID in `.env` eintragen: `SONIOX_VOICE=<uuid>`, Voice-Core neu starten. A/B-Test gegen Lena: Zeile
+   zurückstellen. Nur diese eine Variable je Test ändern.
+4. Kommt ein neues TTS-Modell, meldet die Stimme `not_computed`: in der Console **Recompute**.
+
+Datenschutz: Die Aufnahme geht zu Soniox (Region siehe „Bekannt / offen“) und ist eine biometrische
+Stimmprobe (DSGVO Art. 9). Vorher entscheiden, ob das in Ordnung ist; Löschen geht in der Console.
 
 ## nieeeki auf dem iPhone (ohne App Store)
 
