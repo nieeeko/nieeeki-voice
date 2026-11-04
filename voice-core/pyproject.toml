@@ -13,4 +13,5 @@ dependencies = [
     "mss>=10",
     "livekit-wakeword>=0.3,<0.4",
     "sounddevice>=0.5",
+    "sherpa-onnx>=2.0,<3",
 ]

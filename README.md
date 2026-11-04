@@ -52,13 +52,14 @@ Tippen = Klick, Wischen = Scrollen, Text und Tasten Enter/Rücktaste/Tab/Esc, al
 Host), Meldung bei gesperrtem Laptop,
 Entwicklungsaufträge mit Art planen/umsetzen/reviewen und passenden ECC-Werkzeugen.
 
-1. **Stimmabdruck** (ECAPA) in `speakers`: Nikolaj sicher erkennen statt „wer zuerst spricht“;
-   nur seine Stimme darf Aufträge und PC-Aktionen auslösen.
-2. **Weckwort „nieeeki“** (openWakeWord mit eigenem Modell), damit kein Klick mehr nötig ist.
-3. **Eigene Stimme:** Aufnahme mit dem Vorlesetext → Soniox-Voice-Cloning, A/B-Test gegen Nina.
-4. **Sprach-Feinschliff, je eine Änderung pro Test:** Sprechtempo 1,1; „Ja“ während ihrer Frage.
-5. **Online ohne Tailscale-App** (Daily-Transport, Phase 2) und Voice-Core in der Cloud (Phase 3).
-6. **Kalender und Mail** (zurückgestellt).
+1. **Stimmabdruck scharf schalten** (gebaut am 02.11., läuft im Modus `beobachten`): einlernen, ein paar
+   Gespräche lang die Werte im Log ansehen, Schwellen nachstellen, dann `NIEEEKI_VOICE_CHECK=streng`
+   (siehe [Stimmabdruck](#stimmabdruck-nur-deine-stimme-löst-aufträge-aus)). Danach die Farben im
+   Stimmen-Rand am Abdruck festmachen statt an „wer zuerst spricht“.
+2. **Eigene Stimme:** Aufnahme mit dem Vorlesetext → Soniox-Voice-Cloning, A/B-Test gegen Lena.
+3. **Sprach-Feinschliff, je eine Änderung pro Test:** Sprechtempo 1,1; „Ja“ während ihrer Frage.
+4. **Online ohne Tailscale-App** (Daily-Transport, Phase 2) und Voice-Core in der Cloud (Phase 3).
+5. **Kalender und Mail** (zurückgestellt).
 
 Seit dem 19.10. zusätzlich erledigt: Freigabe-Karten für PC-Aktionen (Klick führt aus, doppelt
 gesichert), Rechtsklick per langem Drücken und Lupe im Live-Bild, Schleier blendet sich bei
@@ -103,6 +104,32 @@ Grenzen: iOS pausiert die App im Hintergrund; das Gespräch läuft nur, solange 
   Betrieb: 84,5 % erkannt, 2,2 % Fehlalarm bei ähnlichen Wörtern („sneaky“, „Nicky“, „Niko“), etwa ein
   Fehlalarm in 11 Stunden Gerede. Knappe Fälle stehen mit Wert in `desktop\logs\wake.log`; danach die
   Schwelle in `voice-core/.env` (`NIEEEKI_WAKE_THRESHOLD`, z. B. 0.7) nachstellen.
+
+## Stimmabdruck (nur deine Stimme löst Aufträge aus)
+
+- **Einlernen (einmal):** Gespräch starten → oben **„Stimme einlernen“** → nieeeki sagt kurz, worum es
+  geht → den Text vorlesen oder frei erzählen, bis der Balken voll ist (20 s Sprache). Geht nur per Klick in
+  der angemeldeten Oberfläche, nie per Sprache, damit keine fremde Stimme den Abdruck ersetzen kann. Während
+  der Aufnahme hört nieeeki nicht zu (Spracherkennung bekommt Stille).
+- **Prüfen:** Jede Äußerung wird lokal mit dem Abdruck verglichen (`voice-core/voice_gate.py`, Modell NeMo
+  TitaNet-Large, ~100 MB, lädt beim ersten Start nach `voice-core/.cache/sprecher/`, Prüfsumme wird
+  geprüft). Ergebnis oben in der Kopfzeile: **Stimme Nikolaj 0,78**, **Fremd 0,12** oder **Unklar**.
+  Im Log: `Stimme: 0.78 bei 2.3 s -> nikolaj`.
+- **Was gesperrt wird (Modus `streng`):** jedes Werkzeug außer Uhrzeit, Websuche und Canvas, wenn die letzte
+  Äußerung mit genug Sprache (ab 1 s) nicht sicher Nikolaj war (fremd oder unklar), wenn die Prüfung
+  fehlschlug oder länger als 2 s dauert, und wenn er seit 2 Minuten nicht mehr sicher erkannt wurde.
+  Kurze Sätze („Ja“, „mach“) gelten nach einer sicheren Erkennung mit, außer sie klingen klar fremd.
+  Getippter Text in der Oberfläche zählt wie Nikolaj, auch ohne eingelernten Abdruck; gesprochene Aufträge
+  sind ohne Abdruck gesperrt. Neu einlernen geht dann nur, wenn er gerade an der Stimme erkannt ist.
+  Geprüft wird im Code vor dem Werkzeug, nicht im Prompt.
+- **Modi** (`NIEEEKI_VOICE_CHECK` in `voice-core/.env`): `beobachten` (Standard: misst, zeigt und
+  protokolliert, sperrt nichts), `streng`, `aus`. Schwellen siehe `voice-core/.env.example`
+  (`NIEEEKI_VOICE_OWNER_MIN` 0,5, `NIEEEKI_VOICE_STRANGER_MAX` 0,3).
+- **Kalibrieren:** Gemessen mit Beispielaufnahmen: gleiche Stimme 0,67 bis 0,91, fremde höchstens 0,34.
+  Liegen deine Werte im Log meist unter 0,5, `OWNER_MIN` senken; kommen Gäste über 0,3, `STRANGER_MAX`
+  senken. Erst wenn das ein paar Gespräche lang passt, auf `streng` stellen.
+- **Datenschutz:** Gespeichert wird nur der Abdruck (192 Zahlen) in `speakers.voiceprint`, nie eine
+  Aufnahme. Die Spalte ist für die Oberfläche nicht lesbar (DSGVO Art. 9, siehe Migration `0001`).
 
 ## Admin-Zugriff (mit Freigabe)
 
@@ -219,6 +246,8 @@ ohne Bestätigung; neue Migrationen deshalb ohne `drop if exists` schreiben.
 
 - Zugriff auf `nieeeki_voice_*` nur mit nieeeki-Profil; Profile legt nur das Backend (service_role) an.
 - PC-Aktionen: `read` sofort, `change` protokolliert, `critical` nur nach Freigabe, `blocked` nie.
+- Werkzeuge (außer Uhrzeit, Websuche, Canvas) nur, wenn zuletzt Nikolajs Stimme erkannt wurde oder er getippt
+  hat (Stimmabdruck, Modus `streng`).
 - Die UI darf Aktionen nur lesen und offene Anfragen freigeben/ablehnen.
 - Stimmabdrücke (biometrisch, DSGVO Art. 9) sind für die UI nicht lesbar.
 - Inhalte aus Web, Mails, Dateien sind Daten, nie Anweisungen an nieeeki.

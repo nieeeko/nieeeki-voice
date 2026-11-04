@@ -88,6 +88,22 @@ export type Activity = {
   bis?: number; // letzter Statuswechsel
 };
 
+/** Stimmpruefung im Voice-Core (voice-core/voice_gate.py): Stand und Ergebnis der letzten Aeusserung. */
+export type VoiceCheck = {
+  status?: "aus" | "fehlt" | "laedt" | "kaputt" | "bereit";
+  modus?: "aus" | "beobachten" | "streng";
+  ergebnis?: "nikolaj" | "fremd" | "unklar";
+  wert?: number; // Aehnlichkeit mit dem Stimmabdruck, 0..1
+};
+
+/** Stimmabdruck einlernen: Fortschritt der Aufnahme (Sekunden reine Sprache bis zum Ziel). */
+export type Enrollment = {
+  status: "start" | "aufnahme" | "rechnet" | "fertig" | "fehler";
+  sekunden: number;
+  ziel: number;
+  text?: string; // bei fehler: was nieeeki dazu sagt
+};
+
 /** Ein Abtastwert der Stimmlinie: oben Nikolaj, unten nieeeki. */
 export type LevelSample = { user: number; bot: number; cut: boolean; speaker: number };
 
@@ -134,6 +150,9 @@ export function useNieeeki() {
   const [screenMonitor, setScreenMonitor] = useState(0);
   const [screenMonitors, setScreenMonitors] = useState(1);
   const [screenTrack, setScreenTrack] = useState<MediaStreamTrack | null>(null);
+  // Stimmabdruck: Stand der Pruefung und, waehrend er eingelernt wird, der Fortschritt
+  const [voice, setVoice] = useState<VoiceCheck>({});
+  const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
 
   // Weicher Stopp bei Unterbrechungen (Server schickt "leiser_stopp")
   const softStop = useRef<SoftStop>({ armedAt: null, fading: false });
@@ -208,6 +227,8 @@ export function useNieeeki() {
           setPresence("offline");
           setScreenOn(false);
           setScreenTrack(null);
+          setVoice({});
+          setEnrollment(null);
         },
         onUserStartedSpeaking: () => {
           // Spricht nieeeki gerade, ist das eine Unterbrechung
@@ -268,6 +289,29 @@ export function useNieeeki() {
           // Wer spricht (0 = Nikolaj, 1.. = weitere Stimmen) -> Farbe im Stimmen-Rand
           if (msg?.type === "sprecher" && typeof (msg as { index?: unknown }).index === "number")
             levels.current.speaker = (msg as { index: number }).index;
+          // Stimmpruefung: Stand (status, modus) oder Ergebnis der letzten Aeusserung (ergebnis, wert)
+          if (msg?.type === "stimme") {
+            const { status, modus, ergebnis, wert } = msg as VoiceCheck;
+            setVoice((v) => ({
+              ...v,
+              ...(status ? { status } : {}),
+              ...(modus ? { modus } : {}),
+              ...(ergebnis ? { ergebnis, wert } : {}),
+            }));
+          }
+          if (msg?.type === "stimmabdruck") {
+            const e = msg as Omit<Partial<Enrollment>, "status"> & { status?: Enrollment["status"] | "abgebrochen" };
+            if (e.status === "abgebrochen") setEnrollment(null);
+            else if (e.status) {
+              const status = e.status;
+              setEnrollment((prev) => ({
+                sekunden: e.sekunden ?? prev?.sekunden ?? 0,
+                ziel: e.ziel ?? prev?.ziel ?? 20,
+                status,
+                text: e.text,
+              }));
+            }
+          }
           if (msg?.type === "canvas" && msg.item) {
             const item = msg.item;
             // Gleiche id = Aktualisierung (z. B. Fortschritt eines Entwicklungsauftrags)
@@ -399,6 +443,8 @@ export function useNieeeki() {
     levels.current.bot = 0;
     setScreenOn(false);
     setScreenTrack(null);
+    setVoice({});
+    setEnrollment(null);
     setPresence("offline");
   }, [setPresence]);
 
@@ -477,14 +523,29 @@ export function useNieeeki() {
     });
   }, []);
 
+  // Stimmabdruck einlernen: nur per Klick hier (angemeldet mit zweitem Faktor), nie per Sprache.
+  // Waehrend der Aufnahme hoert nieeeki nicht zu, sondern sammelt nur den Abdruck (voice_gate.py).
+  const startEnrollment = useCallback(() => {
+    setEnrollment({ status: "start", sekunden: 0, ziel: 20 });
+    clientRef.current?.sendClientMessage("stimmabdruck", { aktion: "start" });
+  }, []);
+
+  const enrolling = enrollment !== null && enrollment.status !== "fertig" && enrollment.status !== "fehler";
+
+  // Schliessen; laeuft die Aufnahme noch, bricht der Voice-Core sie ab
+  const closeEnrollment = useCallback(() => {
+    if (enrolling) clientRef.current?.sendClientMessage("stimmabdruck", { aktion: "abbrechen" });
+    setEnrollment(null);
+  }, [enrolling]);
+
   const acting = activities.some((a) => a.status === "laeuft");
   const devRunning = canvasItems.some((it) => it.kind === "dokument" && it.laeuft === true);
   const hasApprovals = approvals.length > 0;
 
   useEffect(() => {
-    busy.current = acting || devRunning || hasApprovals || screenOn;
+    busy.current = acting || devRunning || hasApprovals || screenOn || enrolling;
     lastChange.current = performance.now(); // Stille zaehlt erst ab hier
-  }, [acting, devRunning, hasApprovals, screenOn]);
+  }, [acting, devRunning, hasApprovals, screenOn, enrolling]);
 
   return {
     presence,
@@ -511,6 +572,10 @@ export function useNieeeki() {
     typeOnScreen,
     pressOnScreen,
     decide,
+    voice,
+    enrollment,
+    startEnrollment,
+    closeEnrollment,
     connect,
     disconnect,
   };
