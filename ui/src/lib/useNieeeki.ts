@@ -5,6 +5,7 @@ import { PipecatClient } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import type { CanvasItem } from "@/components/Canvas";
 import { EMPTY_MISSION, nextMission, type Mission } from "@/lib/mission";
+import { parseIceServers } from "@/lib/rtcProxy";
 import { accessToken } from "@/lib/supabase";
 
 export type Presence = "offline" | "connecting" | "idle" | "listening" | "thinking" | "speaking";
@@ -114,8 +115,15 @@ export type LevelHistory = { samples: LevelSample[]; seq: number };
 export type NieeekiState = ReturnType<typeof useNieeeki>;
 
 const VOICE_CORE_URL = process.env.NEXT_PUBLIC_VOICE_CORE_URL ?? "http://localhost:7860";
-// Der Voice-Core laesst diese Adresse, localhost und die Vercel-Vorschauen herein (bot.py, auth_gate.py)
-const CONNECT_TIMEOUT_MS = 20_000;
+// Weg B (plans/online-ohne-tailscale.md): Handy ohne Tailscale. Das Offer geht an /api/rtc, die Route legt es in
+// Supabase ab, der Voice-Core holt es ausgehend ab. Standard "direkt": wie bisher ueber VOICE_CORE_URL.
+const RENDEZVOUS = process.env.NEXT_PUBLIC_TRANSPORT === "rendezvous";
+// Nur oeffentliche STUN-Adressen (nichts gesetzt = nur lokale Adressen); TURN-Zugangsdaten gehoeren nie hierher.
+const ICE_SERVERS = parseIceServers(process.env.NEXT_PUBLIC_ICE_SERVERS);
+// Der Voice-Core laesst diese Adresse, localhost und die Vercel-Vorschauen herein (bot.py, auth_gate.py).
+// Mit Rendezvous dauert der Aufbau laenger (der Voice-Core fragt alle 2 s nach, die Route wartet bis 20 s,
+// danach versucht der Transport es nach 2 s noch einmal).
+const CONNECT_TIMEOUT_MS = RENDEZVOUS ? 35_000 : 20_000;
 const HOME_URL = "https://nieeeki.nieeeko.com";
 const HISTORY = 240; // ~12 s bei 20 Hz
 // Per Weckwort begonnene Gespraeche enden nach so langer Stille von selbst; dann lauscht der PC wieder.
@@ -204,7 +212,8 @@ export function useNieeeki() {
     wakeSession.current = anlass === "weckwort";
     setPresence("connecting");
     const client = new PipecatClient({
-      transport: new SmallWebRTCTransport(),
+      // Mit Rendezvous muessen alle ICE-Kandidaten schon im Offer stehen (es gibt keinen Draht fuer Einzelnes)
+      transport: new SmallWebRTCTransport(RENDEZVOUS ? { waitForICEGathering: true, iceServers: ICE_SERVERS } : undefined),
       enableMic: true,
       enableCam: false,
       callbacks: {
@@ -380,31 +389,45 @@ export function useNieeeki() {
       pendingText.current = null;
       setPresence("offline");
       setError(
-        `Keine Verbindung zum PC nach ${CONNECT_TIMEOUT_MS / 1000} s. Ist der PC an, läuft nieeeki dort, und ist Tailscale (auf PC und Handy) verbunden?`,
+        RENDEZVOUS
+          ? `Keine Antwort vom PC nach ${CONNECT_TIMEOUT_MS / 1000} s. Ist der PC an, ist er online, und läuft nieeeki dort?`
+          : `Keine Verbindung zum PC nach ${CONNECT_TIMEOUT_MS / 1000} s. Ist der PC an, läuft nieeeki dort, und ist Tailscale (auf PC und Handy) verbunden?`,
       );
     }, CONNECT_TIMEOUT_MS);
     try {
       // Der Voice-Core laesst nur Nikolaj mit zweitem Faktor herein (voice-core/auth_gate.py).
       // Der Transport schickt diese Header auch beim WebRTC-Offer und den ICE-Updates mit.
       const token = await accessToken();
-      await client.startBotAndConnect({
-        endpoint: `${VOICE_CORE_URL}/start`,
-        headers: new Headers(token ? { Authorization: `Bearer ${token}` } : {}),
-        // Immer gueltiges JSON (leerer Body gab einen ERROR im Log). Beim Bot kommt nur "body" an
-        // (Pipecat-Runner); per Weckwort begruesst sie damit nur kurz ("Ja?").
-        requestData: anlass === "weckwort" ? { body: { anlass } } : {},
-      });
+      const headers = new Headers(token ? { Authorization: `Bearer ${token}` } : {});
+      if (RENDEZVOUS) {
+        // Kein /start am Voice-Core: Der Transport signalisiert direkt gegen /api/rtc (Offer, Neuverhandlung,
+        // ICE-Neustart). Von hier kommt nie ein Body fuer bot(): den erzeugt rendezvous.py selbst.
+        await client.connect({ webrtcRequestParams: { endpoint: "/api/rtc", headers, requestData: {} } });
+      } else {
+        await client.startBotAndConnect({
+          endpoint: `${VOICE_CORE_URL}/start`,
+          headers,
+          // Immer gueltiges JSON (leerer Body gab einen ERROR im Log). Beim Bot kommt nur "body" an
+          // (Pipecat-Runner); per Weckwort begruesst sie damit nur kurz ("Ja?").
+          requestData: anlass === "weckwort" ? { body: { anlass } } : {},
+        });
+      }
     } catch (e) {
       clearTimeout(watchdog);
       pendingText.current = null; // nicht beim naechsten Verbinden unerwartet nachschicken
       setPresence("offline");
       // Fremde Herkunft weist der Voice-Core per CORS ab; der Browser meldet das nur als Netzwerkfehler.
       // Chrome laesst eine Webseite ausserdem nur mit Erlaubnis ins lokale Netz (Tailscale-Adresse 100.x).
-      const lna = (e as { status?: number }).status === 401 ? null : await localNetworkPermission();
+      const status = (e as { status?: number }).status;
+      const lna = status === 401 || RENDEZVOUS ? null : await localNetworkPermission();
       setError(
-        (e as { status?: number }).status === 401
+        status === 401
           ? "Der Voice-Core hat die Anmeldung abgelehnt. Bitte ab- und wieder anmelden."
-          : lna === "denied" || lna === "prompt"
+          : RENDEZVOUS && status === 429
+            ? "Zu viele Verbindungsversuche in kurzer Zeit. Bitte eine Minute warten."
+            : RENDEZVOUS
+              ? "Die Verbindung zum PC über das Internet kam nicht zustande. Ist der PC an, ist er online, und läuft nieeeki dort?"
+              : lna === "denied" || lna === "prompt"
             ? "Chrome lässt diese Seite nicht ins lokale Netzwerk, darum kommt sie nicht zum Voice-Core. Links neben der Adresse auf das Symbol klicken, bei „Lokales Netzwerk“ „Zulassen“ wählen und neu laden."
             : `Voice-Core unter ${VOICE_CORE_URL} nicht erreichbar (läuft bot.py, ist die Adresse ${HOME_URL} oder eine Vorschau?).`,
       );
