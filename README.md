@@ -198,6 +198,17 @@ außer sie steht auf deiner Erlaubnisliste.
   3. In Vercel `NEXT_PUBLIC_VOICE_CORE_URL=https://<laptop>.<tailnet>.ts.net` setzen und neu deployen.
   4. Auf dem Handy (Tailscale an) `https://nieeeki.nieeeko.com` öffnen und anmelden.
 - Domain: CNAME `nieeeki` bei Hostinger auf Vercel (seit 19.10.2026). Produktion kommt von `main`.
+- **Online ohne Tailscale-App (Weg B, 13.11.2026 eingeschaltet, Bauplan [plans/online-ohne-tailscale.md](plans/online-ohne-tailscale.md)):**
+  Das Handy schickt sein Verbindungsangebot an `/api/rtc`, die Route legt es in Supabase (`voice_signals`) ab, der
+  Voice-Core holt es ausgehend ab (alle 2 s) und antwortet; am Laptop lauscht dafür nichts.
+  - Voice-Core (`.env`): `NIEEEKI_RENDEZVOUS=1` und, solange der Geräteschlüssel (Plan, Schritt 6) fehlt,
+    `NIEEEKI_RENDEZVOUS_UNBOUND=1`. **Das heißt: Ein gestohlenes Supabase-Token (mit zweitem Faktor, höchstens 1 Tag
+    alt) reicht für eine Sitzung.** Tailscale schützt nur den direkten Weg. Ausschalten: beide Zeilen entfernen,
+    Voice-Core neu starten.
+  - Oberfläche (Vercel, Production): `NEXT_PUBLIC_TRANSPORT=rendezvous` ist der Standard. **Rückweg:** Adresse mit
+    `?weg=direkt` öffnen (der Browser merkt sich die Wahl), `?weg=rendezvous` wählt Weg B, `?weg=standard` vergisst
+    die Wahl. Die Desktop-App (localhost) nutzt weiter den direkten Weg.
+  - Ohne TURN-Relay (Cloudflare ruht) kann der Aufbau hinter Mobilfunk scheitern; dann `?weg=direkt` mit Tailscale.
 
 Ausführlicher Bauplan: Doc „nieeeki – Bauplan für den eigenen Jarvis“ (Architektur, 10-Schritte-Plan, Entscheidungen).
 
@@ -259,7 +270,14 @@ Dann `http://localhost:3000` öffnen → „Gespräch starten“ → Mikrofon er
 | --- | --- | --- | --- |
 | DEV | shared-devtest | `nieeeki_voice_dev` | Preview / Development |
 | TEST | shared-devtest | `nieeeki_voice_test` | – |
-| PROD | shared-prod | `nieeeki_voice_prod` | Production |
+| PROD | shared-prod | `nieeeki_voice_prod` | Production (siehe Hinweis) |
+
+**Hinweis (13.11.2026, nachgeprüft):** Die laufende App, also der Voice-Core **und** die Vercel-Produktion, benutzt
+heute das Projekt **shared-devtest** mit dem Schema `nieeeki_voice_dev`; `shared-prod` / `nieeeki_voice_prod` ist
+angelegt und aktuell (Migration `0002` ist dort angewendet), wird von der App aber noch nicht benutzt. Darum steht
+`NEXT_PUBLIC_NIEEEKI_DB_SCHEMA` in Vercel (Production) auf `nieeeki_voice_dev`: Die Route `/api/rtc` liest genau diese
+Variable und muss dasselbe Schema wie der Voice-Core treffen. Ein Umzug auf `shared-prod` wäre ein eigener Schritt
+(Anmeldung, Konten, Schlüssel, Voice-Core und Vercel gemeinsam umstellen).
 
 Migrationen: `supabase/migrations/` mit Platzhalter `__SCHEMA__`; `scripts/render-migration.sh <schema>`
 erzeugt das SQL je Umgebung. Migrationen laufen genau einmal je Schema und sind danach unveränderlich;
