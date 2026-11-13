@@ -58,6 +58,21 @@ test("parseOffer: requestData des Clients wird verworfen", () => {
   assert.equal("request_data" in offer, false);
 });
 
+test("parseOffer: Signatur und Zeit des Geraets werden durchgereicht, aber nur in der erwarteten Form", () => {
+  const gut = { sdp: "v=0", type: "offer" };
+  const signiert = parseOffer(JSON.stringify({ ...gut, sig: "abc_-", ts: 1800000000 }));
+  assert.equal(signiert?.sig, "abc_-");
+  assert.equal(signiert?.ts, 1800000000);
+  assert.equal("sig" in (parseOffer(JSON.stringify(gut)) ?? {}), false); // ohne Signatur bleibt der Body wie bisher
+  assert.equal(parseOffer(JSON.stringify({ ...gut, ts: 1e11 - 1 }))?.ts, 1e11 - 1); // letzte erlaubte Zeit
+  assert.equal("sig" in (parseOffer(JSON.stringify({ ...gut, sig: null })) ?? {}), false); // null = nicht gesetzt
+  const schlecht = [
+    { sig: "" }, { sig: "x".repeat(201) }, { sig: 5 }, { sig: {} }, { sig: "a b" }, { sig: "ab+/=" }, { sig: "abc\n" },
+    { ts: "1800000000" }, { ts: 1.5 }, { ts: 0 }, { ts: -1 }, { ts: 1e11 }, { ts: 1e12 }, { ts: true },
+  ];
+  for (const extra of schlecht) assert.equal(parseOffer(JSON.stringify({ ...gut, ...extra })), null, JSON.stringify(extra));
+});
+
 test("parseOffer: Abweichungen werden abgewiesen", () => {
   const schlecht = [
     "", "kein json", "null", "[]", "42", '"offer"', "{}",

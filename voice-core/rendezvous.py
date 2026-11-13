@@ -33,6 +33,7 @@ weil dieser Prozess PC-Werkzeuge ausloest):
 
 Kurzcodes in der Zeile (Vertrag mit ui/src/lib/rtcProxy.ts; 4xx beendet den Client, 5xx laesst ihn neu versuchen):
   form, owner, wiederholt, geraet -> 4xx;  handler, abbruch -> 5xx.
+  "geraet" nur, wenn der Pruefer das Geraet verneint; faellt der Pruefer aus (Datenbank, Zeitbudget), ist es "abbruch".
 Kein Vergleich von created_at mit der Laptop-Uhr: eine falsch gehende Uhr wuerde sonst jede Anfrage ablehnen.
 """
 
@@ -56,6 +57,7 @@ POLL_MAX_SECS = 30.0  # bei Dauerfehlern waechst die Pause bis hierher
 PURGE_EVERY_SECS = 60.0
 PURGE_OLDER_SECS = 180
 HANDLER_TIMEOUT_SECS = 10.0  # der Proxy wartet 20 s auf die Antwort, eine spaetere waere nutzlos
+VERIFY_TIMEOUT_SECS = 5.0  # Gesamtbudget der Geraetepruefung (eine haengende Datenbank darf die Schleife nicht blockieren)
 CONNECT_GRACE_SECS = 30.0  # so lange darf eine beantwortete Verbindung brauchen, bis sie steht
 CLOSE_WAIT_SECS = 3.0  # beim Beenden dürfen laufende Gespraeche selbst aufraeumen (Sitzung beenden, Lernen)
 MAX_SDP_CHARS = 30000
@@ -65,7 +67,8 @@ CHANNEL = "phone"  # Kanal der Sitzungen, die ueber das Rendezvous kommen (memor
 PLACEHOLDER = {"sdp": "", "type": "offer"}  # ersetzt das Offer nach der Antwort (der CHECK der Tabelle verlangt sdp und type)
 ENV_ON = frozenset({"1", "true", "yes", "ja", "an"})
 
-ALLOWED_KEYS = frozenset({"sdp", "type", "pc_id", "restart_pc", "requestData", "request_data"})
+ALLOWED_KEYS = frozenset({"sdp", "type", "pc_id", "restart_pc", "requestData", "request_data", "sig", "ts"})
+MAX_SIG_CHARS = 200  # Signatur des Geraets (devices.py): 64 Bytes als base64url sind 86 Zeichen
 ICE_KEYS = ("urls", "username", "credential")
 
 Verifier = Callable[[dict, dict], Awaitable[bool]]  # (Zeile, geprueftes Offer) -> Geraet ist gebunden
@@ -96,7 +99,18 @@ def validate_offer(request: object) -> dict | None:
         extra = request.get(key)
         if extra is not None and not isinstance(extra, dict):
             return None
-    return {"sdp": sdp, "type": "offer", "pc_id": pc_id, "restart_pc": restart}
+    # Signatur und Zeit des Geraets (devices.py); nur der verifier wertet sie aus, der Handler sieht sie nie
+    sig, ts = request.get("sig"), request.get("ts")
+    if sig is not None and not (isinstance(sig, str) and 0 < len(sig) <= MAX_SIG_CHARS):
+        return None
+    if ts is not None and (isinstance(ts, bool) or not isinstance(ts, int) or not 0 < ts < 10**11):
+        return None
+    offer = {"sdp": sdp, "type": "offer", "pc_id": pc_id, "restart_pc": restart}
+    if sig is not None:
+        offer["sig"] = sig
+    if ts is not None:
+        offer["ts"] = ts
+    return offer
 
 
 def _hide_sdp(record: dict) -> None:
@@ -281,9 +295,13 @@ class Rendezvous:
             return await self._reject(row_id, "wiederholt")
         if self._verifier is not None:
             try:
-                bound = await self._verifier(row, offer)
-            except Exception:
-                bound = False
+                bound = await asyncio.wait_for(self._verifier(row, offer), VERIFY_TIMEOUT_SECS)
+            except Exception as e:
+                # Datenbank weg oder zu langsam: nie durchlassen, aber auch keine Aussage ueber das Geraet. "abbruch"
+                # (5xx) laesst den Client nach 2 s neu versuchen; das Offer zaehlt dabei nicht als Wiederholung.
+                logger.warning("Rendezvous: Geraetepruefung fehlgeschlagen ({})", type(e).__name__)
+                self._seen.pop(digest, None)
+                return await self._reject(row_id, "abbruch")
             if not bound:
                 return await self._reject(row_id, "geraet")
         started = self._clock()
@@ -410,6 +428,10 @@ class Rendezvous:
         await asyncio.gather(*tasks, *watchers, return_exceptions=True)
         with contextlib.suppress(Exception):
             await self._store.close()
+        close_verifier = getattr(self._verifier, "close", None)  # der Pruefer haelt eine eigene Datenbankverbindung
+        if close_verifier is not None:
+            with contextlib.suppress(Exception):
+                await close_verifier()
 
 
 def ice_servers_from_env(raw: str | None) -> list[dict]:

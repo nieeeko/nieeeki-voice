@@ -87,6 +87,7 @@ from soft_interrupt import (
 )
 from voice_gate import SpeakerVerifier, VoiceGate, gate_schemas, install_tool_gate, watch_typed_text
 from voiceprint import VoiceModel, from_vector, to_vector
+from devices import verifier_from_env as device_verifier
 from rendezvous import install_rendezvous
 
 load_dotenv(override=True)
@@ -606,5 +607,6 @@ if __name__ == "__main__":
     install_owner_gate(app)
     # Weg B (Plan online-ohne-tailscale): Offers aus Supabase holen statt HTTP anzunehmen. Nur mit
     # NIEEEKI_RENDEZVOUS=1; bot ist hier die Funktion aus __main__ (ein zweiter Import haette eine eigene SingleSession).
-    install_rendezvous(app, bot)
+    # Mit Geraetebindung (devices.py, Standard): nur Offers, die ein am Laptop gekoppeltes Geraet signiert hat.
+    install_rendezvous(app, bot, verifier=device_verifier())
     main()

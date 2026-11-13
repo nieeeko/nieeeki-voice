@@ -182,6 +182,15 @@ class ValidateTests(unittest.TestCase):
         self.assertNotIn("requestData", offer)
         self.assertNotIn("request_data", offer)
 
+    def test_geraetesignatur_wird_durchgereicht_und_streng_geprueft(self):
+        offer = validate_offer({"sdp": "v=0", "type": "offer", "sig": "abc", "ts": 1800000000})
+        self.assertEqual((offer["sig"], offer["ts"]), ("abc", 1800000000))
+        gut = {"sdp": "v=0", "type": "offer"}
+        for extra in ({"sig": ""}, {"sig": "x" * 201}, {"sig": 5}, {"ts": "1"}, {"ts": True}, {"ts": 0}, {"ts": -5},
+                      {"ts": 1.5}, {"ts": 10**12}):
+            with self.subTest(extra=extra):
+                self.assertIsNone(validate_offer({**gut, **extra}))
+
     def test_abweichungen_werden_abgewiesen(self):
         gut = {"sdp": "v=0", "type": "offer"}
         schlecht = [
@@ -460,11 +469,25 @@ class ZeileTests(Fixture):
         self.assertEqual(self.handler.requests, [])
         self.make(verifier=kaputt)
         await self.rdv.process(row(row_id="k"))
-        self.assertEqual(self.store.failures, [("k", "geraet")])
+        self.assertEqual(self.store.failures, [("k", "abbruch")])  # Ausfall des Pruefers: 5xx, kein Urteil ueber das Geraet
         self.assertEqual(self.handler.requests, [])
         self.make(verifier=ja)
         await self.rdv.process(row(row_id="j"))
         self.assertEqual([a[0] for a in self.store.answers], ["j"])
+
+    async def test_close_schliesst_den_pruefer(self):
+        class Pruefer:
+            closed = False
+
+            async def __call__(self, r, o):
+                return True
+
+            async def close(self):
+                Pruefer.closed = True
+
+        self.make(verifier=Pruefer())
+        await self.rdv.close()
+        self.assertTrue(Pruefer.closed)
 
     async def test_zeile_ohne_id_wird_ignoriert(self):
         self.make()

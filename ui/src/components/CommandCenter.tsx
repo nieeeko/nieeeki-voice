@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { ActivityFeed, clockTime } from "@/components/ActivityFeed";
 import { Canvas } from "@/components/Canvas";
 import { Composer } from "@/components/Composer";
+import { DevicePair } from "@/components/DevicePair";
 import { HudOrb } from "@/components/HudOrb";
 import { Mission } from "@/components/Mission";
 import { ScreenView } from "@/components/ScreenView";
@@ -104,9 +105,12 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
     enrollment,
     startEnrollment,
     closeEnrollment,
+    viaRendezvous,
     connect,
     disconnect,
   } = n;
+  // Gerät koppeln (Weg ohne Tailscale): ein Panel in der Mitte wie beim Einlernen; ein Klick schaltet es um
+  const [pairOpen, setPairOpen] = useState(false);
   const online = presence !== "offline" && presence !== "connecting";
   const voiceInfo = online ? voiceModule(voice) : null;
   const state = acting && online ? "Handelt" : PRESENCE_TEXT[presence];
@@ -123,7 +127,8 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
   if (canvasItems.length > pick.canvas) view = "canvas";
   if (screenOn && !pick.screen) view = "bildschirm";
   if (view === "bildschirm" && !screenOn) view = "kern";
-  const shown: View | null = enrollment ? null : view;
+  const showPair = pairOpen && viaRendezvous && !enrollment;
+  const shown: View | null = enrollment || showPair ? null : view;
   const choose = (v: View) => setPick({ view: v, canvas: canvasItems.length, screen: screenOn });
 
   // Rechte Spalte: eine neue Freigabe holt den Reiter "Freigaben" nach vorn
@@ -176,8 +181,25 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
           <SessionClock since={connectedAt} />
         </div>
         {voiceInfo && !enrollment && (
-          <button type="button" className="gate-link" onClick={startEnrollment}>
+          <button
+            type="button"
+            className="gate-link"
+            onClick={() => {
+              setPairOpen(false); // sonst spraengt das Koppel-Panel nach dem Einlernen wieder auf
+              startEnrollment();
+            }}
+          >
             {voice.status === "bereit" ? "Stimme neu einlernen" : "Stimme einlernen"}
+          </button>
+        )}
+        {viaRendezvous && !enrollment && (
+          <button
+            type="button"
+            className="gate-link"
+            aria-expanded={showPair}
+            onClick={() => setPairOpen((open) => !open)}
+          >
+            Gerät koppeln
           </button>
         )}
         <button
@@ -221,6 +243,7 @@ export function CommandCenter({ n, signOut }: { n: NieeekiState; signOut: () => 
       <main className="col-core">
         {/* Beim Einlernen nur der Vorlesetext, sonst Kern, Canvas oder Live-Bildschirm */}
         {enrollment && <VoiceEnroll enrollment={enrollment} onClose={closeEnrollment} />}
+        {showPair && <DevicePair onClose={() => setPairOpen(false)} />}
         {shown && (
           <nav className="views" aria-label="Ansicht">
             <button type="button" aria-pressed={shown === "kern"} onClick={() => choose("kern")}>

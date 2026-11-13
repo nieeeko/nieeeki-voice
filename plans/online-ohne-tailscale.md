@@ -196,7 +196,44 @@ Voice-Core prüft die Signatur. Bis dahin bleibt der neue Weg ein Zusatz, nicht 
 - **Prüfen:** UI-Build, Lint, Typen; REA-Prüfung des Bundles auf Geheimnisse.
 
 ### 6. Gerätebindung (Abhängigkeit: 5; vor dem Abschalten der Tailscale-Pflicht) — Nikolaj: Geräteschlüssel, nicht Passkey
-- **Entwurf (noch nicht gebaut):** Das Handy erzeugt einmal ein ECDSA-P-256-Schlüsselpaar mit WebCrypto
+- **Gebaut (13.11.2026, Branch `feat/weg-b-geraetebindung`, Entscheidungen von Nikolaj: Kurzcode statt QR, Geräteliste als
+  Tabelle):** `ui/src/lib/deviceKey.ts` (WebCrypto-Schlüssel, nicht exportierbar, signierendes `fetch` nur für POST an
+  `/api/rtc`), `ui/src/components/DevicePair.tsx` („Gerät koppeln“: Schlüssel erzeugen, wartende Zeile eintragen, Kurzcode
+  zeigen), `voice-core/devices.py` (Prüfer `DeviceVerifier`, Geräteliste `DeviceStore`, Laptop-Werkzeug
+  `uv run devices.py koppeln|liste|entfernen`), `rendezvous.py` (`sig`/`ts` im Offer, schließt den Prüfer), Migration
+  `0003_geraete` (Tabelle `voice_devices`, nur der Voice-Core gibt frei). Bindung ist **Standard an**
+  (`NIEEEKI_DEVICE_BINDING=aus` schaltet sie ab, dann gilt wieder `NIEEEKI_RENDEZVOUS_UNBOUND`). Der Kurzcode gehört zum
+  Schlüssel (60 Bit, „XXXX-XXXX-XXXX“; bei 40 Bit hätte ein Dieb mit Token, der den wartenden Schlüssel mitlesen kann,
+  mit einer GPU eine zweite Vorlage mit gleichem Code gefunden); freigegeben wird nur, was zu dem Code passt, den Nikolaj von seinem Handy abliest, wartende Zeilen
+  verfallen nach 10 Minuten (die Datenbank erzwingt das beim Freigeben). Das Offer trägt `sig` und `ts` im Body; signiert
+  wird `nieeeki-rtc-v1|<ts>|<pc_id>|<SHA-256 des SDP>`; Browser und Voice-Core haben denselben Testvektor.
+  **Tests:** `test_devices.py` und `test_rendezvous.py` (zusammen 115), UI 38 mit dem Node-Runner, `tsc` und `eslint`
+  sauber, Webpack-Build grün, Bundle per REA und Grep ohne Geheimnisse. **Reviews (ECC):** `database-reviewer` (Migration:
+  kanonischer Schlüssel, Etikett per Code-Punkten, Freigabe-Trigger mit Frist), `python-reviewer`, `typescript-reviewer`
+  (fand: Der Transport ruft `fetch(new Request(...))` mit einem Argument auf, das erste Gerüst hätte nie ein Offer
+  signiert; jetzt mit Request-Test) und `security-reviewer` (keine offenen Blocker). Kurzcode auf 60 Bit angehoben,
+  Ausfall des Prüfers ist `abbruch` (5xx, kein Urteil über das Gerät) mit 5 s Zeitbudget.
+  **Grenzen, ehrlich:** Der Schlüssel schützt vor Token-Diebstahl, nicht vor Code, der auf dem Handy selbst in die Seite
+  gelangt (XSS): Der könnte über das Signieren des eigenen Schlüssels Sitzungen starten. Es gibt keine
+  Content-Security-Policy (`next.config.ts` setzt keine Header); bekannte HTML-Senke ist `Canvas.tsx` (`innerHTML` mit
+  Mermaid-SVG). **Folgepaket:** CSP (`script-src 'self'` mit Nonce, `object-src 'none'`, `base-uri 'none'`,
+  `frame-ancestors 'none'`, `connect-src` auf Supabase) vor dem Abschalten der Tailscale-Pflicht. Die Signatur deckt
+  `restart_pc` nicht ab; ein Replay scheitert am DTLS-Fingerprint im SDP (aiortc lehnt einen fremden ab).
+  **Ausrollen (Reihenfolge wichtig):** (1) Migration `0003` auf DEV (die laufende App nutzt DEV), (2) Voice-Core neu
+  starten (Bindung ist dann an; bis ein Gerät gekoppelt ist, lehnt Weg B jede Sitzung mit `geraet` ab, `?weg=direkt` mit
+  Tailscale geht weiter), (3) UI deployen (sonst schickt eine alte UI ein Offer ohne Signatur), (4) am Handy „Gerät
+  koppeln“, am Laptop `uv run devices.py koppeln`, (5) `NIEEEKI_RENDEZVOUS_UNBOUND` aus der `.env` entfernen.
+  **Datenbank (13.11.):** `0003` ist auf TEST und DEV angewendet (von Nikolaj im SQL-Editor, Projekt shared-devtest; der
+  Connector lehnte das Schreiben ab). Beide Schemas haben identische Prüfsummen für Constraints, Trigger, Policies,
+  Spalten- und Tabellenrechte, Funktionskörper und Indizes. Die Angriffstests (`supabase/tests/0003_geraete_angriffe.sql`,
+  66 Fälle: Spaltenrechte, Insert mit `status`/`user_id`/`approved_at`, anon, aal1, alter Login, Fremder, Schlüssel- und
+  Etikettregeln, sechs Zeilen in einer Anweisung, Grenzen 5 und 10, Freigabe mit DB-Uhr, Frist beim Freigeben, Aufräumen)
+  liefen auf TEST mit **0 Abweichungen** (Transaktion mit absichtlichem Abbruch, danach keine Reste). Auf DEV ist nur die
+  Struktur verglichen, nicht der volle Lauf. PROD nicht angewendet (dort läuft die App nicht).
+  **Noch offen:** echter Lauf am Handy (Schritt 7); Down→Up-Rundlauf; Hinweis der Supabase-Warnliste („`auth.<function>()`
+  je Zeile“) für `second_factor_and_fresh_login` (kommt bei `voice_signals` aus 0002 genauso, die Policy nutzt bereits
+  `(select auth.jwt())`, je Nutzer höchstens 10 Zeilen).
+- **Entwurf (Grundlage):** Das Handy erzeugt einmal ein ECDSA-P-256-Schlüsselpaar mit WebCrypto
   (`extractable: false`, im IndexedDB des Browsers; der private Schlüssel verlässt das Gerät nie). Bei jedem Offer
   signiert ein kleiner `fetch`-Wrapper nur für `/api/rtc` die Zeichenkette `<Zeitstempel>.<SHA-256 des SDP>` und
   schickt Signatur und Zeitstempel als Header (der Transport selbst bietet dafür keinen Haken, Header sind dort
@@ -256,6 +293,18 @@ Realtime `postgres_changes` zusammen mit `auth.jwt()->>'aal'` in RLS zur Laufzei
 Privileges in der Datenbank; Cloudflare: Grenzen für `ttl`, Verhalten bestehender Verbindungen nach Ablauf oder
 Widerruf; Daily (SFU oder P2P, Verschlüsselung); IPv6 und UDP im Mobilfunk; heutiger Wert von
 `NEXT_PUBLIC_VOICE_CORE_URL` auf Vercel.
+
+## Offene Arbeitspakete (Stand 13.11.2026, Nikolajs Liste)
+1. **Geräteschlüssel (Schritt 6):** gebaut, siehe oben; Ausrollen und Datenbanktest stehen aus. Ohne ihn bleibt Tailscale
+   der Schutz gegen ein gestohlenes Token.
+2. **Live-Test von Weg B** mit dem Handy ohne Tailscale, danach Abschluss (Schritt 7 und 8). Dazu ein kleiner Test von
+   Antwort-Schreiben und Aufräumen gegen die echte Datenbank (`claim`, `answer`, zweites `answer` = leer, `purge`).
+3. **Cloudflare/TURN (Schritt 3):** ruht auf Nikolajs Entscheidung; ohne Relay kann der Aufbau hinter Mobilfunk scheitern.
+4. **Stimme einlernen** („später“): Das Log zeigt „Stimmpruefung: fehlt“, keine Messwerte; erst danach Schwellen nachstellen.
+5. **Live-Tests der Stimme:** Tempo 1,1 läuft seit dem Neustart am 12.11.; „Ja während ihrer Frage“ hat im Log noch nie
+   ausgelöst, ist also nicht live geprüft.
+6. **Weitere Wünsche:** eigene Stimme per Cloning (mit Datenschutz-OK), Kalender und Mail (zurückgestellt), Voice-Core in
+   der Cloud (Phase 3).
 
 ## Offene Fragen an Nikolaj
 1. Weg B (empfohlen) oder A?

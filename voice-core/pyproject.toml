@@ -10,6 +10,7 @@ dependencies = [
     "loguru>=0.7",
     "tzdata>=2026.5",
     "pyjwt[crypto]>=2.10",
+    "cryptography>=42",  # devices.py (ECDSA-Pruefung) importiert es direkt; kam bisher nur ueber pyjwt[crypto]
     "mss>=10",
     "livekit-wakeword>=0.3,<0.4",
     "sounddevice>=0.5",
