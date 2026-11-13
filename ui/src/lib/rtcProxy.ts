@@ -12,7 +12,9 @@
  */
 
 export const MAX_BODY_CHARS = 40_000;
-const ALLOWED_KEYS = new Set(["sdp", "type", "pc_id", "restart_pc", "requestData", "request_data"]);
+// sig und ts: Signatur des Geraeteschluessels (deviceKey.ts), geprueft wird sie nur im Voice-Core (devices.py)
+const ALLOWED_KEYS = new Set(["sdp", "type", "pc_id", "restart_pc", "requestData", "request_data", "sig", "ts"]);
+const MAX_SIG_CHARS = 200;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Kurzcodes, die der Voice-Core in die Zeile schreibt (rendezvous.py), und was der Client daraus machen soll:
@@ -58,7 +60,23 @@ export function parseOffer(text: string): Record<string, unknown> | null {
   const pcId = offer.pc_id;
   if (pcId != null && (typeof pcId !== "string" || pcId.length === 0 || pcId.length > 100)) return null;
   if (offer.restart_pc != null && typeof offer.restart_pc !== "boolean") return null;
-  return { sdp: offer.sdp, type: "offer", pc_id: pcId ?? null, restart_pc: offer.restart_pc ?? false };
+  const parsed: Record<string, unknown> = {
+    sdp: offer.sdp,
+    type: "offer",
+    pc_id: pcId ?? null,
+    restart_pc: offer.restart_pc ?? false,
+  };
+  // Signatur und Zeit des Geraets: nur durchreichen, wenn sie die Form haben, die der Voice-Core erwartet
+  const { sig, ts } = offer;
+  if (sig != null) {
+    if (typeof sig !== "string" || sig.length === 0 || sig.length > MAX_SIG_CHARS || !/^[A-Za-z0-9_-]+$/.test(sig)) return null;
+    parsed.sig = sig;
+  }
+  if (ts != null) {
+    if (typeof ts !== "number" || !Number.isInteger(ts) || ts <= 0 || ts >= 1e11) return null;
+    parsed.ts = ts;
+  }
+  return parsed;
 }
 
 /**

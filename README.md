@@ -201,10 +201,18 @@ außer sie steht auf deiner Erlaubnisliste.
 - **Online ohne Tailscale-App (Weg B, 13.11.2026 eingeschaltet, Bauplan [plans/online-ohne-tailscale.md](plans/online-ohne-tailscale.md)):**
   Das Handy schickt sein Verbindungsangebot an `/api/rtc`, die Route legt es in Supabase (`voice_signals`) ab, der
   Voice-Core holt es ausgehend ab (alle 2 s) und antwortet; am Laptop lauscht dafür nichts.
-  - Voice-Core (`.env`): `NIEEEKI_RENDEZVOUS=1` und, solange der Geräteschlüssel (Plan, Schritt 6) fehlt,
-    `NIEEEKI_RENDEZVOUS_UNBOUND=1`. **Das heißt: Ein gestohlenes Supabase-Token (mit zweitem Faktor, höchstens 1 Tag
-    alt) reicht für eine Sitzung.** Tailscale schützt nur den direkten Weg. Ausschalten: beide Zeilen entfernen,
-    Voice-Core neu starten.
+  - Voice-Core (`.env`): `NIEEEKI_RENDEZVOUS=1`. Mit **Geräteschlüssel** (Standard, `NIEEEKI_DEVICE_BINDING=an`) startet nur
+    ein Gerät eine Sitzung, das du am Laptop gekoppelt hast; ein gestohlenes Supabase-Token reicht dann nicht.
+    Solange kein Gerät gekoppelt ist, lehnt Weg B jede Sitzung ab (`?weg=direkt` mit Tailscale geht weiter).
+    `NIEEEKI_RENDEZVOUS_UNBOUND=1` wird dabei nicht mehr gebraucht und ignoriert; nur mit `NIEEEKI_DEVICE_BINDING=aus`
+    gilt es wieder, und dann reicht ein gestohlenes Token (mit zweitem Faktor, höchstens 1 Tag alt) für eine Sitzung.
+    Ausschalten: `NIEEEKI_RENDEZVOUS` entfernen, Voice-Core neu starten.
+  - **Gerät koppeln (einmal je Handy; braucht Migration `0003` im Schema):** Am Handy `https://nieeeki.nieeeko.com`
+    öffnen und anmelden, oben „Gerät koppeln“ → „Kopplung starten“: Das Handy zeigt einen Code wie `ABCD-EFGH-JKLM`. Am Laptop
+    im Ordner `voice-core`: `uv run devices.py koppeln`, den Code eingeben, mit `j` bestätigen. Der Code gilt zehn Minuten.
+    `uv run devices.py liste` zeigt die gekoppelten Geräte, `uv run devices.py entfernen <Nummer>` entfernt eins.
+    Der Schlüssel entsteht im Handy und verlässt es nie (nicht exportierbar); im privaten Modus oder nach „Websitedaten
+    löschen“ ist er weg, dann neu koppeln. Geht die Uhr des Handys mehr als eine Minute falsch, lehnt der Voice-Core ab.
   - Oberfläche (Vercel, Production): `NEXT_PUBLIC_TRANSPORT=rendezvous` ist der Standard. **Rückweg:** Adresse mit
     `?weg=direkt` öffnen (der Browser merkt sich die Wahl), `?weg=rendezvous` wählt Weg B, `?weg=standard` vergisst
     die Wahl. Die Desktop-App (localhost) nutzt weiter den direkten Weg.

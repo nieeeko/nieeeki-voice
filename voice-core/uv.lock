@@ -1974,6 +1974,7 @@ name = "nieeeki-voice-core"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "httpx" },
     { name = "livekit-wakeword" },
     { name = "loguru" },
@@ -1988,6 +1989,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=42" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "livekit-wakeword", specifier = ">=0.3,<0.4" },
     { name = "loguru", specifier = ">=0.7" },

@@ -5,6 +5,7 @@ import { PipecatClient } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import type { CanvasItem } from "@/components/Canvas";
 import { EMPTY_MISSION, nextMission, type Mission } from "@/lib/mission";
+import { installRtcSigning } from "@/lib/deviceKey";
 import { parseIceServers } from "@/lib/rtcProxy";
 import { resolveTransport } from "@/lib/transportMode";
 import { accessToken } from "@/lib/supabase";
@@ -131,6 +132,21 @@ const CONNECT_TIMEOUT_DIRECT_MS = 20_000;
 const CONNECT_TIMEOUT_RENDEZVOUS_MS = 35_000;
 const RENDEZVOUS_HINT = " Zurück zum Weg über Tailscale: die Adresse mit ?weg=direkt öffnen.";
 
+/**
+ * Kurzcode, mit dem /api/rtc ein Offer abgelehnt hat ({ error: "geraet" | "verboten" | ... }). Der Transport haengt
+ * die ungelesene Antwort als error.cause an; ohne sie (anderer Fehler) null.
+ */
+async function refusalCode(error: unknown): Promise<string | null> {
+  try {
+    const response = (error as { cause?: unknown }).cause;
+    if (!(response instanceof Response)) return null;
+    const body = (await response.clone().json()) as { error?: unknown };
+    return typeof body.error === "string" ? body.error : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Gilt fuer diese Sitzung der Weg ueber Supabase? Die Wahl per Adresse merkt sich der Browser. */
 function pickRendezvous(): boolean {
   let stored: string | null = null;
@@ -185,6 +201,13 @@ export function useNieeeki() {
   // Stimmabdruck: Stand der Pruefung und, waehrend er eingelernt wird, der Fortschritt
   const [voice, setVoice] = useState<VoiceCheck>({});
   const [enrollment, setEnrollment] = useState<Enrollment | null>(null);
+  // Gilt der Weg ueber Supabase (Weg B)? Erst im Browser bekannt, darum nach dem ersten Rendern gesetzt
+  // (der Knopf "Geraet koppeln" erscheint nur dort).
+  const [viaRendezvous, setViaRendezvous] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setViaRendezvous(pickRendezvous()), 0);
+    return () => clearTimeout(id);
+  }, []);
 
   // Weicher Stopp bei Unterbrechungen (Server schickt "leiser_stopp")
   const softStop = useRef<SoftStop>({ armedAt: null, fading: false });
@@ -236,6 +259,8 @@ export function useNieeeki() {
     wakeSession.current = anlass === "weckwort";
     setPresence("connecting");
     const rendezvous = pickRendezvous();
+    // Offers an /api/rtc mit dem Geraeteschluessel signieren (deviceKey.ts), falls dieses Geraet gekoppelt ist
+    if (rendezvous) installRtcSigning();
     const connectTimeoutMs = rendezvous ? CONNECT_TIMEOUT_RENDEZVOUS_MS : CONNECT_TIMEOUT_DIRECT_MS;
     const client = new PipecatClient({
       // Mit Rendezvous muessen alle ICE-Kandidaten schon im Offer stehen (es gibt keinen Draht fuer Einzelnes)
@@ -446,12 +471,21 @@ export function useNieeeki() {
       // Chrome laesst eine Webseite ausserdem nur mit Erlaubnis ins lokale Netz (Tailscale-Adresse 100.x).
       const status = (e as { status?: number }).status;
       const lna = status === 401 || rendezvous ? null : await localNetworkPermission();
+      // 403 heisst bei Weg B zweierlei: Dieses Geraet ist nicht gekoppelt ("geraet") oder die Anmeldung reicht nicht mehr
+      // (zweiter Faktor, hoechstens ein Tag alt: "verboten"/"anmeldung"). Die Antwort der Route sagt es.
+      const refusal = rendezvous && status === 403 ? await refusalCode(e) : null;
       setError(
         status === 401
           ? "Der Voice-Core hat die Anmeldung abgelehnt. Bitte ab- und wieder anmelden."
-          : rendezvous && status === 429
-            ? `Zu viele Verbindungsversuche in kurzer Zeit. Bitte eine Minute warten.${RENDEZVOUS_HINT}`
-            : rendezvous
+          : refusal === "geraet"
+            ? `Dieses Gerät ist für den Weg ohne Tailscale nicht gekoppelt (oder seine Uhr geht mehr als eine Minute falsch). Oben „Gerät koppeln“ wählen.${RENDEZVOUS_HINT}`
+            : rendezvous && status === 403
+              ? refusal
+                ? `Die Anmeldung reicht dafür nicht mehr (zweiter Faktor, höchstens ein Tag alt). Bitte ab- und wieder anmelden.${RENDEZVOUS_HINT}`
+                : `Abgelehnt: Dieses Gerät ist nicht gekoppelt (oben „Gerät koppeln“), oder die Anmeldung ist zu alt (bitte ab- und wieder anmelden).${RENDEZVOUS_HINT}`
+              : rendezvous && status === 429
+                ? `Zu viele Verbindungsversuche in kurzer Zeit. Bitte eine Minute warten.${RENDEZVOUS_HINT}`
+                : rendezvous
               ? `Die Verbindung zum PC über das Internet kam nicht zustande. Ist der PC an, ist er online, und läuft nieeeki dort?${RENDEZVOUS_HINT}`
               : lna === "denied" || lna === "prompt"
             ? "Chrome lässt diese Seite nicht ins lokale Netzwerk, darum kommt sie nicht zum Voice-Core. Links neben der Adresse auf das Symbol klicken, bei „Lokales Netzwerk“ „Zulassen“ wählen und neu laden."
@@ -625,6 +659,7 @@ export function useNieeeki() {
     enrollment,
     startEnrollment,
     closeEnrollment,
+    viaRendezvous,
     connect,
     disconnect,
   };
