@@ -6,6 +6,7 @@ import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import type { CanvasItem } from "@/components/Canvas";
 import { EMPTY_MISSION, nextMission, type Mission } from "@/lib/mission";
 import { parseIceServers } from "@/lib/rtcProxy";
+import { resolveTransport } from "@/lib/transportMode";
 import { accessToken } from "@/lib/supabase";
 
 export type Presence = "offline" | "connecting" | "idle" | "listening" | "thinking" | "speaking";
@@ -116,14 +117,37 @@ export type NieeekiState = ReturnType<typeof useNieeeki>;
 
 const VOICE_CORE_URL = process.env.NEXT_PUBLIC_VOICE_CORE_URL ?? "http://localhost:7860";
 // Weg B (plans/online-ohne-tailscale.md): Handy ohne Tailscale. Das Offer geht an /api/rtc, die Route legt es in
-// Supabase ab, der Voice-Core holt es ausgehend ab. Standard "direkt": wie bisher ueber VOICE_CORE_URL.
-const RENDEZVOUS = process.env.NEXT_PUBLIC_TRANSPORT === "rendezvous";
+// Supabase ab, der Voice-Core holt es ausgehend ab. Der Standard kommt aus NEXT_PUBLIC_TRANSPORT ("direkt" wie
+// bisher ueber VOICE_CORE_URL, oder "rendezvous"); die Adresse ?weg=direkt|rendezvous|standard ueberstimmt ihn und
+// wird im Browser gemerkt (transportMode.ts): So ist man bei Standard "rendezvous" nie ausgesperrt.
+const ENV_TRANSPORT = process.env.NEXT_PUBLIC_TRANSPORT;
+const TRANSPORT_KEY = "nieeeki-weg";
 // Nur oeffentliche STUN-Adressen (nichts gesetzt = nur lokale Adressen); TURN-Zugangsdaten gehoeren nie hierher.
 const ICE_SERVERS = parseIceServers(process.env.NEXT_PUBLIC_ICE_SERVERS);
 // Der Voice-Core laesst diese Adresse, localhost und die Vercel-Vorschauen herein (bot.py, auth_gate.py).
 // Mit Rendezvous dauert der Aufbau laenger (der Voice-Core fragt alle 2 s nach, die Route wartet bis 20 s,
 // danach versucht der Transport es nach 2 s noch einmal).
-const CONNECT_TIMEOUT_MS = RENDEZVOUS ? 35_000 : 20_000;
+const CONNECT_TIMEOUT_DIRECT_MS = 20_000;
+const CONNECT_TIMEOUT_RENDEZVOUS_MS = 35_000;
+const RENDEZVOUS_HINT = " Zurück zum Weg über Tailscale: die Adresse mit ?weg=direkt öffnen.";
+
+/** Gilt fuer diese Sitzung der Weg ueber Supabase? Die Wahl per Adresse merkt sich der Browser. */
+function pickRendezvous(): boolean {
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(TRANSPORT_KEY);
+  } catch {
+    // privater Modus o. Ae.: dann gilt nur Adresse oder Standard
+  }
+  const choice = resolveTransport({ envDefault: ENV_TRANSPORT, search: window.location.search, stored });
+  try {
+    if (choice.store === "clear") localStorage.removeItem(TRANSPORT_KEY);
+    else if (choice.store) localStorage.setItem(TRANSPORT_KEY, choice.store);
+  } catch {
+    // nicht merken koennen ist kein Fehler
+  }
+  return choice.mode === "rendezvous";
+}
 const HOME_URL = "https://nieeeki.nieeeko.com";
 const HISTORY = 240; // ~12 s bei 20 Hz
 // Per Weckwort begonnene Gespraeche enden nach so langer Stille von selbst; dann lauscht der PC wieder.
@@ -211,9 +235,11 @@ export function useNieeeki() {
     setError(null);
     wakeSession.current = anlass === "weckwort";
     setPresence("connecting");
+    const rendezvous = pickRendezvous();
+    const connectTimeoutMs = rendezvous ? CONNECT_TIMEOUT_RENDEZVOUS_MS : CONNECT_TIMEOUT_DIRECT_MS;
     const client = new PipecatClient({
       // Mit Rendezvous muessen alle ICE-Kandidaten schon im Offer stehen (es gibt keinen Draht fuer Einzelnes)
-      transport: new SmallWebRTCTransport(RENDEZVOUS ? { waitForICEGathering: true, iceServers: ICE_SERVERS } : undefined),
+      transport: new SmallWebRTCTransport(rendezvous ? { waitForICEGathering: true, iceServers: ICE_SERVERS } : undefined),
       enableMic: true,
       enableCam: false,
       callbacks: {
@@ -380,7 +406,7 @@ export function useNieeeki() {
     });
     clientRef.current = client;
     // Ist der Voice-Core nicht erreichbar (z. B. Tailscale am PC aus), haengt der Verbindungsaufbau ohne
-    // Fehler. Nach CONNECT_TIMEOUT_MS gibt es deshalb eine Meldung statt endlosem "Verbinde ...".
+    // Fehler. Nach connectTimeoutMs gibt es deshalb eine Meldung statt endlosem "Verbinde ...".
     let ready = false;
     const watchdog = setTimeout(() => {
       if (ready || clientRef.current !== client) return;
@@ -389,17 +415,17 @@ export function useNieeeki() {
       pendingText.current = null;
       setPresence("offline");
       setError(
-        RENDEZVOUS
-          ? `Keine Antwort vom PC nach ${CONNECT_TIMEOUT_MS / 1000} s. Ist der PC an, ist er online, und läuft nieeeki dort?`
-          : `Keine Verbindung zum PC nach ${CONNECT_TIMEOUT_MS / 1000} s. Ist der PC an, läuft nieeeki dort, und ist Tailscale (auf PC und Handy) verbunden?`,
+        rendezvous
+          ? `Keine Antwort vom PC nach ${connectTimeoutMs / 1000} s. Ist der PC an, ist er online, und läuft nieeeki dort?${RENDEZVOUS_HINT}`
+          : `Keine Verbindung zum PC nach ${connectTimeoutMs / 1000} s. Ist der PC an, läuft nieeeki dort, und ist Tailscale (auf PC und Handy) verbunden?`,
       );
-    }, CONNECT_TIMEOUT_MS);
+    }, connectTimeoutMs);
     try {
       // Der Voice-Core laesst nur Nikolaj mit zweitem Faktor herein (voice-core/auth_gate.py).
       // Der Transport schickt diese Header auch beim WebRTC-Offer und den ICE-Updates mit.
       const token = await accessToken();
       const headers = new Headers(token ? { Authorization: `Bearer ${token}` } : {});
-      if (RENDEZVOUS) {
+      if (rendezvous) {
         // Kein /start am Voice-Core: Der Transport signalisiert direkt gegen /api/rtc (Offer, Neuverhandlung,
         // ICE-Neustart). Von hier kommt nie ein Body fuer bot(): den erzeugt rendezvous.py selbst.
         await client.connect({ webrtcRequestParams: { endpoint: "/api/rtc", headers, requestData: {} } });
@@ -419,14 +445,14 @@ export function useNieeeki() {
       // Fremde Herkunft weist der Voice-Core per CORS ab; der Browser meldet das nur als Netzwerkfehler.
       // Chrome laesst eine Webseite ausserdem nur mit Erlaubnis ins lokale Netz (Tailscale-Adresse 100.x).
       const status = (e as { status?: number }).status;
-      const lna = status === 401 || RENDEZVOUS ? null : await localNetworkPermission();
+      const lna = status === 401 || rendezvous ? null : await localNetworkPermission();
       setError(
         status === 401
           ? "Der Voice-Core hat die Anmeldung abgelehnt. Bitte ab- und wieder anmelden."
-          : RENDEZVOUS && status === 429
-            ? "Zu viele Verbindungsversuche in kurzer Zeit. Bitte eine Minute warten."
-            : RENDEZVOUS
-              ? "Die Verbindung zum PC über das Internet kam nicht zustande. Ist der PC an, ist er online, und läuft nieeeki dort?"
+          : rendezvous && status === 429
+            ? `Zu viele Verbindungsversuche in kurzer Zeit. Bitte eine Minute warten.${RENDEZVOUS_HINT}`
+            : rendezvous
+              ? `Die Verbindung zum PC über das Internet kam nicht zustande. Ist der PC an, ist er online, und läuft nieeeki dort?${RENDEZVOUS_HINT}`
               : lna === "denied" || lna === "prompt"
             ? "Chrome lässt diese Seite nicht ins lokale Netzwerk, darum kommt sie nicht zum Voice-Core. Links neben der Adresse auf das Symbol klicken, bei „Lokales Netzwerk“ „Zulassen“ wählen und neu laden."
             : `Voice-Core unter ${VOICE_CORE_URL} nicht erreichbar (läuft bot.py, ist die Adresse ${HOME_URL} oder eine Vorschau?).`,
