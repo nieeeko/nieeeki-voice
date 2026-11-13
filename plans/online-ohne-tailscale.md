@@ -223,9 +223,16 @@ Voice-Core prüft die Signatur. Bis dahin bleibt der neue Weg ein Zusatz, nicht 
   starten (Bindung ist dann an; bis ein Gerät gekoppelt ist, lehnt Weg B jede Sitzung mit `geraet` ab, `?weg=direkt` mit
   Tailscale geht weiter), (3) UI deployen (sonst schickt eine alte UI ein Offer ohne Signatur), (4) am Handy „Gerät
   koppeln“, am Laptop `uv run devices.py koppeln`, (5) `NIEEEKI_RENDEZVOUS_UNBOUND` aus der `.env` entfernen.
-  **Noch offen:** Migration nie gegen eine echte Datenbank ausgeführt (der Connector hat das am 13.11. abgelehnt); danach
-  die Angriffstests aus dem Review (Spaltenrechte, Insert mit `status`, sechs Zeilen in einer Anweisung, Frist beim
-  Freigeben) und echter Lauf am Handy (Schritt 7).
+  **Datenbank (13.11.):** `0003` ist auf TEST und DEV angewendet (von Nikolaj im SQL-Editor, Projekt shared-devtest; der
+  Connector lehnte das Schreiben ab). Beide Schemas haben identische Prüfsummen für Constraints, Trigger, Policies,
+  Spalten- und Tabellenrechte, Funktionskörper und Indizes. Die Angriffstests (`supabase/tests/0003_geraete_angriffe.sql`,
+  66 Fälle: Spaltenrechte, Insert mit `status`/`user_id`/`approved_at`, anon, aal1, alter Login, Fremder, Schlüssel- und
+  Etikettregeln, sechs Zeilen in einer Anweisung, Grenzen 5 und 10, Freigabe mit DB-Uhr, Frist beim Freigeben, Aufräumen)
+  liefen auf TEST mit **0 Abweichungen** (Transaktion mit absichtlichem Abbruch, danach keine Reste). Auf DEV ist nur die
+  Struktur verglichen, nicht der volle Lauf. PROD nicht angewendet (dort läuft die App nicht).
+  **Noch offen:** echter Lauf am Handy (Schritt 7); Down→Up-Rundlauf; Hinweis der Supabase-Warnliste („`auth.<function>()`
+  je Zeile“) für `second_factor_and_fresh_login` (kommt bei `voice_signals` aus 0002 genauso, die Policy nutzt bereits
+  `(select auth.jwt())`, je Nutzer höchstens 10 Zeilen).
 - **Entwurf (Grundlage):** Das Handy erzeugt einmal ein ECDSA-P-256-Schlüsselpaar mit WebCrypto
   (`extractable: false`, im IndexedDB des Browsers; der private Schlüssel verlässt das Gerät nie). Bei jedem Offer
   signiert ein kleiner `fetch`-Wrapper nur für `/api/rtc` die Zeichenkette `<Zeitstempel>.<SHA-256 des SDP>` und
