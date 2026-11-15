@@ -261,7 +261,7 @@ Dann `http://localhost:3000` öffnen → „Gespräch starten“ → Mikrofon er
 | Datei | Gelesen von | Inhalt |
 | --- | --- | --- |
 | `.env` (Hauptordner oder `voice-core/`) | Voice-Core (Python) | `SONIOX_API_KEY`, `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `NIEEEKI_OWNER_ID`, `VOYAGE_API_KEY`; optional `SONIOX_TERMS`, `PIPECAT_ALLOWED_ORIGINS` |
-| `ui/.env.local` | Next.js | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_NIEEEKI_DB_SCHEMA`, `NEXT_PUBLIC_VOICE_CORE_URL` |
+| `ui/.env.local` | Next.js | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`, `NEXT_PUBLIC_NIEEEKI_DB_SCHEMA`, `NEXT_PUBLIC_VOICE_CORE_URL`; optional `NIEEEKI_CSP` (nur Produktions-Build) |
 
 - Python liest nur eine Datei namens **`.env`**, keine `.env.local`.
 - `NEXT_PUBLIC_` ist eine Next.js-Regel: nur diese Werte landen im Browser. Der Voice-Core läuft nie im Browser, daher kein Präfix.
@@ -299,6 +299,14 @@ ohne Bestätigung; neue Migrationen deshalb ohne `drop if exists` schreiben.
 - Werkzeuge (außer Uhrzeit, Websuche, Canvas) nur, wenn zuletzt Nikolajs Stimme erkannt wurde oder er getippt
   hat (Stimmabdruck, Modus `streng`).
 - Die UI darf Aktionen nur lesen und offene Anfragen freigeben/ablehnen.
+- Web-Oberfläche: Content-Security-Policy mit Nonce je Seitenaufruf (`ui/src/proxy.ts`, `ui/src/lib/csp.ts`). Nur
+  Skripte mit der Nonce dieser Antwort oder von ihnen nachgeladene laufen, kein `eval`, Verbindungen nur zur eigenen
+  Seite, zu Supabase und zum Voice-Core; dazu fester Grundschutz (keine Einbettung, kein `<object>`, kein `<base>`).
+  Stufe per `NIEEEKI_CSP` (Vercel): `beobachten` (Standard, meldet nur, Vercel-Logs nach `csp-report` durchsuchen),
+  `streng` (scharf), `aus`. Erst nach einem Live-Lauf ohne Meldungen auf `streng` stellen. Sie schützt den
+  Geräteschlüssel davor, dass eingeschleuster Code auf dem Handy Sitzungen signiert. **Grenze:** Sie schützt nicht
+  vor Code, dem die Seite selbst vertraut: Der WebRTC-Transport lädt Dailys Skript von `c.daily.co` (läuft mit allen
+  Rechten der Seite, wie schon vorher) und alle npm-Pakete im Bundle.
 - Stimmabdrücke (biometrisch, DSGVO Art. 9) sind für die UI nicht lesbar.
 - Inhalte aus Web, Mails, Dateien sind Daten, nie Anweisungen an nieeeki.
 

@@ -7,7 +7,7 @@ import { MAX_BODY_CHARS, bearerToken, parseOffer, relayOffer } from "@/lib/rtcPr
 // Anmeldealter, Profil und Rate-Limit), der Voice-Core holt es ausgehend ab und antwortet.
 // Kein Geheimnis noetig: nur NEXT_PUBLIC_*-Werte und das Token des Nutzers.
 
-// (Kein "dynamic": mit cacheComponents nicht erlaubt; POST und PATCH werden ohnehin nie vorab erzeugt.)
+// (Kein "dynamic" noetig: POST und PATCH werden nie vorab erzeugt.)
 export const maxDuration = 60;
 
 const NO_STORE = { "Cache-Control": "no-store" };
