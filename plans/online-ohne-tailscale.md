@@ -221,15 +221,17 @@ Voice-Core prüft die Signatur. Bis dahin bleibt der neue Weg ein Zusatz, nicht 
   `Canvas.tsx` (`innerHTML` mit Mermaid-SVG, `securityLevel: "strict"`). **CSP (gebaut 14./15.11.2026):**
   `ui/src/proxy.ts` setzt je Seitenaufruf eine frische Nonce (`script-src 'self' 'nonce-…' 'strict-dynamic'`, kein
   `unsafe-eval`, `connect-src` nur eigene Seite, Supabase https/wss und Voice-Core, `report-uri /api/csp-report`);
-  fester Grundschutz (`object-src`/`base-uri`/`frame-ancestors 'none'`, `form-action 'self'`) und weitere Header aus
-  `next.config.ts`. Stufe `NIEEEKI_CSP`: `beobachten` (Standard, Report-Only), `streng`, `aus`. Dafür wird die Seite je
+  fester Grundschutz (`object-src`/`base-uri 'none'`, `form-action 'self'`) als `<meta>` im Layout, Einbettung verbietet
+  `X-Frame-Options: DENY` aus `next.config.ts` (dort bewusst kein CSP-Header, siehe unten). Stufe `NIEEEKI_CSP`: `beobachten` (Standard, Report-Only), `streng`, `aus`. Dafür wird die Seite je
   Anfrage gerendert (`connection()` im Layout; `cacheComponents`/`partialPrefetching` sind aus, sie vertragen keine
   Nonce). **Fund per REA (Browsermessung):** Der WebRTC-Transport lädt über Dailys Bibliothek ein Skript von
   `c.daily.co` per `fetch` + `Function(...)` (braucht `unsafe-eval`, 10 Verstöße im strengen Modus, Aufbau scheiterte).
   `ui/src/lib/dailyPreload.ts` legt das Daily-Objekt vorab mit `avoidEval` an (Laden per Skript-Element, von
   `strict-dynamic` gedeckt): danach 0 Verstöße, Mikrofone und Mermaid-Diagramm laufen. Ebenfalls gemessen: Mit einem
   scharfen Grundschutz-Header aus dem Proxy verlor Next die Nonce (es kopiert die Antwort-Header des Proxys auf die
-  Anfrage); darum kommt der Grundschutz aus `next.config.ts`, und mit `report-to` daneben lieferte Chrome keine
+  Anfrage). Auf Vercel verdeckte dann auch der Grundschutz-Header aus `next.config.ts` die Nonce (15.11.2026, nach
+  #21: 0 von 11 Skripten mit Nonce; lokal mit `next start` nicht sichtbar), darum steht er seit #22 als `<meta>` im
+  Layout. Mit `report-to` neben `report-uri` lieferte Chrome keine
   Meldungen, darum nur `report-uri`. `security-reviewer`: kein Blocker; eingearbeitet: keine Ausnahme für
   Vorab-Abrufe im Proxy (sonst käme die Nonce des Absenders bei Next an), Pfadgrenzen im Matcher, Berichts-Body
   gestreamt begrenzt und höchstens 2 Meldungen je Anfrage, Warnung bei unbekanntem `NIEEEKI_CSP`, Test der

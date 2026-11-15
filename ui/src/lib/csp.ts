@@ -8,7 +8,7 @@
 //   beobachten (Standard): die strenge Policy nur als Report-Only (Meldungen an /api/csp-report)
 //   streng:                die strenge Policy scharf
 //   aus:                   keine strenge Policy
-// Der Grundschutz (BASELINE_POLICY) ist davon unabhaengig immer scharf.
+// Der Grundschutz (BASELINE_META im Layout, dazu X-Frame-Options) ist davon unabhaengig immer scharf.
 // Erst nach einem sauberen Live-Lauf ohne Meldungen auf "streng" stellen (wie bei der Stimmpruefung: erst beobachten).
 //
 // Reine Funktionen ohne Next-Importe, damit `npm test` sie direkt prueft (csp.test.ts).
@@ -41,14 +41,16 @@ const MAX_FIELD_CHARS = 200;
 const KNOWN_MODES = new Set(["", "aus", "beobachten", "streng"]);
 
 // Grundschutz: kann nichts kaputt machen (kein <object>, kein <base>, keine Einbettung, keine fremden Formularziele).
-// Er ist im Produktions-Build immer scharf und kommt als fester Header aus next.config.ts, NICHT aus dem Proxy:
-// Next kopiert die Antwort-Header des Proxys auf die Anfrage und liest daraus die Nonce. Ein scharfer Header ohne
-// script-src aus dem Proxy verdeckte beim Beobachten die Nonce der Report-Only-Policy (gemessen am 14.11.2026:
-// kein Skript trug eine Nonce, jedes eigene Skript wurde gemeldet).
+// Teil der strengen Policy; immer scharf aber NIE als Header Content-Security-Policy neben der Policy mit Nonce:
+// Next liest die Nonce aus content-security-policy der Anfrage, und ein Header ohne script-src dort verdeckt sie.
+// So geschehen zweimal: aus dem Proxy (lokal, 14.11.2026) und aus next.config.ts auf Vercel (15.11.2026, lokal mit
+// `next start` nicht sichtbar): kein Skript trug eine Nonce. Darum kommt der Grundschutz als <meta> ins Layout
+// (BASELINE_META) und die Einbettung verbietet X-Frame-Options (frame-ancestors gilt in <meta> nicht).
 export const BASELINE_POLICY = "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+export const BASELINE_META = "object-src 'none'; base-uri 'none'; form-action 'self'";
 
-/** Feste Header fuer jede Antwort (next.config.ts); der Grundschutz nur im Produktions-Build. */
-export function securityHeaders(production: boolean): Array<{ key: string; value: string }> {
+/** Feste Header fuer jede Antwort (next.config.ts). Bewusst ohne Content-Security-Policy (siehe BASELINE_POLICY). */
+export function securityHeaders(): Array<{ key: string; value: string }> {
   const headers = [
     { key: "X-Content-Type-Options", value: "nosniff" },
     { key: "Referrer-Policy", value: "no-referrer" },
@@ -61,7 +63,6 @@ export function securityHeaders(production: boolean): Array<{ key: string; value
         "midi=(), browsing-topics=()",
     },
   ];
-  if (production) headers.push({ key: "Content-Security-Policy", value: BASELINE_POLICY });
   return headers;
 }
 
@@ -136,7 +137,7 @@ export function cspHeaders(mode: CspMode, input: CspInput): CspHeaders {
   if (mode === "streng") {
     return { forNext: strict, response: [["Content-Security-Policy", strict]] };
   }
-  // Beim Beobachten nur Report-Only (der scharfe Grundschutz kommt aus next.config.ts, siehe BASELINE_POLICY)
+  // Beim Beobachten nur Report-Only (der scharfe Grundschutz kommt als <meta> aus dem Layout, siehe BASELINE_POLICY)
   return { forNext: strict, response: [["Content-Security-Policy-Report-Only", strict]] };
 }
 
