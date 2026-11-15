@@ -1,25 +1,35 @@
 import type { Metadata, Viewport } from "next";
-import { Atkinson_Hyperlegible, JetBrains_Mono, Unbounded } from "next/font/google";
+import localFont from "next/font/local";
 import { connection } from "next/server";
 import "./globals.css";
 
-// Kommandozentrale: breite Display-Schrift fuer Marke und grosse Zahlen, Mono fuer HUD-Beschriftungen
-const display = Unbounded({
+// Kommandozentrale: breite Display-Schrift fuer Marke und grosse Zahlen, Mono fuer HUD-Beschriftungen.
+// Die Schriften liegen im Repo (fonts/, SIL Open Font License, latin-Teil von Google Fonts, Stand 15.11.2026) statt
+// ueber next/font/google: Google liefert JetBrains Mono inzwischen ueber eine Adresse mit Parametern
+// (/l/font?kit=...&skey=...), daran scheitert der Schriftlader von Turbopack ("queries have exactly one entry").
+// Das brach seit dem 14.11. die lokale Oberflaeche (jede Seite 500) und am 15.11. den Vercel-Build. So braucht weder
+// der Build noch die Desktop-App Google, und die Content-Security-Policy kommt mit font-src 'self' aus.
+const display = localFont({
   variable: "--font-display",
-  subsets: ["latin"],
-  weight: ["500", "700", "800"],
+  src: "./fonts/unbounded-latin-var.woff2",
+  weight: "500 800",
+  display: "swap",
 });
 
-const hud = JetBrains_Mono({
+const hud = localFont({
   variable: "--font-hud",
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  src: "./fonts/jetbrains-mono-latin-var.woff2",
+  weight: "400 700",
+  display: "swap",
 });
 
-const body = Atkinson_Hyperlegible({
+const body = localFont({
   variable: "--font-body",
-  subsets: ["latin"],
-  weight: ["400", "700"],
+  src: [
+    { path: "./fonts/atkinson-hyperlegible-latin-400.woff2", weight: "400", style: "normal" },
+    { path: "./fonts/atkinson-hyperlegible-latin-700.woff2", weight: "700", style: "normal" },
+  ],
+  display: "swap",
 });
 
 export const metadata: Metadata = {

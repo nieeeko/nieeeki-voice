@@ -118,7 +118,7 @@ export function strictPolicy({ nonce, supabaseUrl, voiceCoreUrl }: CspInput): st
     // React-style-Attribute und das <style> im Mermaid-SVG (Canvas.tsx) brauchen Inline-Stile
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:", // data: fuer den QR-Code beim Einrichten des zweiten Faktors
-    "font-src 'self' data:",
+    "font-src 'self' data:", // Schriften liegen im Repo (app/fonts), kein Google
     "media-src 'self' blob: mediastream:",
     `connect-src ${connect.join(" ")}`,
     "worker-src 'self' blob:",
