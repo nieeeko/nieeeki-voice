@@ -152,9 +152,12 @@ Voice-Core prüft die Signatur. Bis dahin bleibt der neue Weg ein Zusatz, nicht 
 - **Korrektur zur Aufbewahrung (gilt statt der Zeile in Schritt 2):** Das Offer wird mit der Antwort durch den
   Platzhalter ersetzt, die **Antwort bleibt** (der Proxy muss sie lesen) bis `purge_voice_signals` (180 s, nicht
   10 Minuten). Sie enthält die Adressen des Laptops. `response` kann wegen `voice_signals_answer_chk` nicht auf null.
-- **Noch offen:** Das Schreiben der Antwort gegen die echte Datenbank (nur MockTransport getestet): kleiner
-  Live-Test gegen TEST (claim, answer, zweites answer = `[]`, purge). Kein Vergleich von `created_at` mit der
-  Laptop-Uhr (eine falsch gehende Uhr würde sonst alles ablehnen); eine zu alte Zeile endet über den Wächter.
+- **Erledigt (15.11.2026):** Live-Test gegen die echte Datenbank, Schema TEST (`voice-core/test_rendezvous_live.py`,
+  läuft nur mit `NIEEEKI_LIVE_DB=1`): `claim` übernimmt genau die offene Zeile, `answer` schreibt die Antwort und
+  ersetzt das Offer durch den Platzhalter, ein zweites `answer` und ein spätes `fail` greifen nicht, `fail` schreibt den
+  Kurzcode, eine abgelaufene Zeile wird nie übernommen, `purge(0)` entfernt sie und lässt jüngere als 2 Minuten. Grün,
+  danach keine Reste. Kein Vergleich von `created_at` mit der Laptop-Uhr (eine falsch gehende Uhr würde sonst alles
+  ablehnen); eine zu alte Zeile endet über den Wächter.
 - **Ursprüngliche Aufgabenliste:** `voice-core/rendezvous.py` beobachtet ausgehend `voice_signals`. Es darf **nicht** `import bot`
   aufrufen (zweite `SingleSession`, zwei parallele Gespräche); `bot` kommt aus `__main__`, der Lauscher startet
   über den Lifespan von `app`. Jede Zeile ist ein Offer: ohne `pc_id` neues `bot()` als Task mit fester
@@ -214,10 +217,34 @@ Voice-Core prüft die Signatur. Bis dahin bleibt der neue Weg ein Zusatz, nicht 
   signiert; jetzt mit Request-Test) und `security-reviewer` (keine offenen Blocker). Kurzcode auf 60 Bit angehoben,
   Ausfall des Prüfers ist `abbruch` (5xx, kein Urteil über das Gerät) mit 5 s Zeitbudget.
   **Grenzen, ehrlich:** Der Schlüssel schützt vor Token-Diebstahl, nicht vor Code, der auf dem Handy selbst in die Seite
-  gelangt (XSS): Der könnte über das Signieren des eigenen Schlüssels Sitzungen starten. Es gibt keine
-  Content-Security-Policy (`next.config.ts` setzt keine Header); bekannte HTML-Senke ist `Canvas.tsx` (`innerHTML` mit
-  Mermaid-SVG). **Folgepaket:** CSP (`script-src 'self'` mit Nonce, `object-src 'none'`, `base-uri 'none'`,
-  `frame-ancestors 'none'`, `connect-src` auf Supabase) vor dem Abschalten der Tailscale-Pflicht. Die Signatur deckt
+  gelangt (XSS): Der könnte über das Signieren des eigenen Schlüssels Sitzungen starten. Bekannte HTML-Senke ist
+  `Canvas.tsx` (`innerHTML` mit Mermaid-SVG, `securityLevel: "strict"`). **CSP (gebaut 14./15.11.2026):**
+  `ui/src/proxy.ts` setzt je Seitenaufruf eine frische Nonce (`script-src 'self' 'nonce-…' 'strict-dynamic'`, kein
+  `unsafe-eval`, `connect-src` nur eigene Seite, Supabase https/wss und Voice-Core, `report-uri /api/csp-report`);
+  fester Grundschutz (`object-src`/`base-uri`/`frame-ancestors 'none'`, `form-action 'self'`) und weitere Header aus
+  `next.config.ts`. Stufe `NIEEEKI_CSP`: `beobachten` (Standard, Report-Only), `streng`, `aus`. Dafür wird die Seite je
+  Anfrage gerendert (`connection()` im Layout; `cacheComponents`/`partialPrefetching` sind aus, sie vertragen keine
+  Nonce). **Fund per REA (Browsermessung):** Der WebRTC-Transport lädt über Dailys Bibliothek ein Skript von
+  `c.daily.co` per `fetch` + `Function(...)` (braucht `unsafe-eval`, 10 Verstöße im strengen Modus, Aufbau scheiterte).
+  `ui/src/lib/dailyPreload.ts` legt das Daily-Objekt vorab mit `avoidEval` an (Laden per Skript-Element, von
+  `strict-dynamic` gedeckt): danach 0 Verstöße, Mikrofone und Mermaid-Diagramm laufen. Ebenfalls gemessen: Mit einem
+  scharfen Grundschutz-Header aus dem Proxy verlor Next die Nonce (es kopiert die Antwort-Header des Proxys auf die
+  Anfrage); darum kommt der Grundschutz aus `next.config.ts`, und mit `report-to` daneben lieferte Chrome keine
+  Meldungen, darum nur `report-uri`. `security-reviewer`: kein Blocker; eingearbeitet: keine Ausnahme für
+  Vorab-Abrufe im Proxy (sonst käme die Nonce des Absenders bei Next an), Pfadgrenzen im Matcher, Berichts-Body
+  gestreamt begrenzt und höchstens 2 Meldungen je Anfrage, Warnung bei unbekanntem `NIEEEKI_CSP`, Test der
+  Header-Logik, `microphone=(self)`. `typescript-reviewer`: `avoidEval` ging bei einem zweiten `load()` (nach einem
+  Fehlschlag) und bei einem Zeitlimit verloren, dann lief Daily wieder über eval (unter `streng` gesperrt); jetzt wird
+  `avoidEval` bei jedem Laden mitgegeben, kein eigenes Zeitlimit (der Watchdog beendet hängende Versuche), und ein
+  abgelöster Start verbindet nicht mehr nach dem Warten; Test, dass App und Transport dieselbe Daily-Kopie laden.
+  **Restrisiko, ehrlich:** Die CSP schützt nur gegen
+  Fremd-Injektion, nicht gegen Code, dem die Seite vertraut: Dailys Skript von `c.daily.co` läuft mit allen Rechten
+  (könnte den Geräteschlüssel zum Signieren benutzen), ebenso jedes npm-Paket; vorher lief dasselbe Skript per eval.
+  **Folgepunkte:** eigener `MediaManager` für den Transport (dann kein Daily-Skript mehr) oder das Bundle gepinnt
+  selbst ausliefern (`bundlePathOverride`); Mermaid-SVG vor `innerHTML` mit DOMPurify filtern; Rate-Limit für
+  `/api/csp-report` in der Vercel-Firewall; Trusted Types als Report-Only. **Noch offen:** Live-Lauf auf Vercel und
+  am Handy (iOS Safari, Android Chrome) im Modus `beobachten`, Vercel-Logs zeitnah nach `csp-report` durchsehen,
+  zweimal `curl -I` (Nonce wechselt, `no-store`) und eine 404-Seite prüfen, dann `NIEEEKI_CSP=streng`. Die Signatur deckt
   `restart_pc` nicht ab; ein Replay scheitert am DTLS-Fingerprint im SDP (aiortc lehnt einen fremden ab).
   **Ausrollen (Reihenfolge wichtig):** (1) Migration `0003` auf DEV (die laufende App nutzt DEV), (2) Voice-Core neu
   starten (Bindung ist dann an; bis ein Gerät gekoppelt ist, lehnt Weg B jede Sitzung mit `geraet` ab, `?weg=direkt` mit
@@ -294,11 +321,11 @@ Privileges in der Datenbank; Cloudflare: Grenzen für `ttl`, Verhalten bestehend
 Widerruf; Daily (SFU oder P2P, Verschlüsselung); IPv6 und UDP im Mobilfunk; heutiger Wert von
 `NEXT_PUBLIC_VOICE_CORE_URL` auf Vercel.
 
-## Offene Arbeitspakete (Stand 13.11.2026, Nikolajs Liste)
-1. **Geräteschlüssel (Schritt 6):** gebaut, siehe oben; Ausrollen und Datenbanktest stehen aus. Ohne ihn bleibt Tailscale
-   der Schutz gegen ein gestohlenes Token.
-2. **Live-Test von Weg B** mit dem Handy ohne Tailscale, danach Abschluss (Schritt 7 und 8). Dazu ein kleiner Test von
-   Antwort-Schreiben und Aufräumen gegen die echte Datenbank (`claim`, `answer`, zweites `answer` = leer, `purge`).
+## Offene Arbeitspakete (Stand 15.11.2026, Nikolajs Liste)
+1. **Geräteschlüssel (Schritt 6):** ausgerollt am 13.11. (PR #20, Migration `0003` auf TEST und DEV, Bindung an).
+   Offen: Handy koppeln. Die CSP als Schutz gegen eingeschleusten Code ist gebaut (Modus `beobachten`), siehe Schritt 6.
+2. **Live-Test von Weg B** mit dem Handy ohne Tailscale, danach Abschluss (Schritt 7 und 8). Der Datenbanktest von
+   Antwort-Schreiben und Aufräumen ist erledigt (Schritt 4, `test_rendezvous_live.py`).
 3. **Cloudflare/TURN (Schritt 3):** ruht auf Nikolajs Entscheidung; ohne Relay kann der Aufbau hinter Mobilfunk scheitern.
 4. **Stimme einlernen** („später“): Das Log zeigt „Stimmpruefung: fehlt“, keine Messwerte; erst danach Schwellen nachstellen.
 5. **Live-Tests der Stimme:** Tempo 1,1 läuft seit dem Neustart am 12.11.; „Ja während ihrer Frage“ hat im Log noch nie

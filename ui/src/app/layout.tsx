@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Atkinson_Hyperlegible, JetBrains_Mono, Unbounded } from "next/font/google";
+import { connection } from "next/server";
 import "./globals.css";
 
 // Kommandozentrale: breite Display-Schrift fuer Marke und grosse Zahlen, Mono fuer HUD-Beschriftungen
@@ -37,7 +38,9 @@ export const viewport: Viewport = {
   colorScheme: "dark",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  // Je Anfrage rendern: Nur so traegt jedes Skript die Nonce der Content-Security-Policy (src/proxy.ts).
+  await connection();
   return (
     <html lang="de" className={`${display.variable} ${hud.variable} ${body.variable}`}>
       <body>{children}</body>

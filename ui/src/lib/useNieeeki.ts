@@ -5,6 +5,7 @@ import { PipecatClient } from "@pipecat-ai/client-js";
 import { SmallWebRTCTransport } from "@pipecat-ai/small-webrtc-transport";
 import type { CanvasItem } from "@/components/Canvas";
 import { EMPTY_MISSION, nextMission, type Mission } from "@/lib/mission";
+import { preloadDailyWithoutEval } from "@/lib/dailyPreload";
 import { installRtcSigning } from "@/lib/deviceKey";
 import { parseIceServers } from "@/lib/rtcProxy";
 import { resolveTransport } from "@/lib/transportMode";
@@ -261,6 +262,9 @@ export function useNieeeki() {
     const rendezvous = pickRendezvous();
     // Offers an /api/rtc mit dem Geraeteschluessel signieren (deviceKey.ts), falls dieses Geraet gekoppelt ist
     if (rendezvous) installRtcSigning();
+    // Dailys Skript ohne eval laden (dailyPreload.ts). Schon der Aufruf legt das Daily-Objekt an (noch vor dem
+    // Transport, der es uebernimmt); gewartet wird erst unten, direkt vor dem Verbinden.
+    const dailyReady = preloadDailyWithoutEval();
     const connectTimeoutMs = rendezvous ? CONNECT_TIMEOUT_RENDEZVOUS_MS : CONNECT_TIMEOUT_DIRECT_MS;
     const client = new PipecatClient({
       // Mit Rendezvous muessen alle ICE-Kandidaten schon im Offer stehen (es gibt keinen Draht fuer Einzelnes)
@@ -450,6 +454,13 @@ export function useNieeeki() {
       // Der Transport schickt diese Header auch beim WebRTC-Offer und den ICE-Updates mit.
       const token = await accessToken();
       const headers = new Headers(token ? { Authorization: `Bearer ${token}` } : {});
+      await dailyReady; // wirft nie: scheitert das Vorladen, laedt der Transport selbst
+      // Inzwischen abgeloest (Watchdog abgelaufen oder ein neuerer Start)? Dann nicht mehr verbinden: Diese Verbindung
+      // gehoerte zu keinem Client mehr und liefe unsichtbar weiter.
+      if (clientRef.current !== client) {
+        clearTimeout(watchdog);
+        return;
+      }
       if (rendezvous) {
         // Kein /start am Voice-Core: Der Transport signalisiert direkt gegen /api/rtc (Offer, Neuverhandlung,
         // ICE-Neustart). Von hier kommt nie ein Body fuer bot(): den erzeugt rendezvous.py selbst.
