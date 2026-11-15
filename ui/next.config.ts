@@ -13,10 +13,11 @@ const nextConfig: NextConfig = {
       },
     },
   },
-  // Feste Sicherheits-Header fuer jede Antwort, im Produktions-Build samt Grundschutz (lib/csp.ts). Die strenge
-  // Policy kommt je Anfrage aus src/proxy.ts, weil sie eine frische Nonce braucht.
+  // Feste Sicherheits-Header fuer jede Antwort (lib/csp.ts), bewusst ohne Content-Security-Policy: Ein CSP-Header hier
+  // verdeckte auf Vercel die Nonce. Die strenge Policy kommt je Anfrage aus src/proxy.ts, der Grundschutz als <meta>
+  // aus app/layout.tsx.
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders(process.env.NODE_ENV === "production") }];
+    return [{ source: "/:path*", headers: securityHeaders() }];
   },
 };
 

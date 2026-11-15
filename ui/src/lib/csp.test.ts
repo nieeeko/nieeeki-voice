@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  BASELINE_META,
   BASELINE_POLICY,
   MAX_REPORT_CHARS,
   REPORT_PATH,
@@ -150,19 +151,21 @@ test("Header je Stufe", () => {
   assert.ok(!strictPolicy(INPUT).includes("report-to"));
 });
 
-test("Grundschutz: fester Header aus next.config.ts, nur im Produktions-Build, gleich dem in der strengen Policy", async () => {
+test("Grundschutz: als <meta> und X-Frame-Options, nie als CSP-Header neben der Nonce-Policy", async () => {
   assert.equal(BASELINE_POLICY, "object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
   assert.ok(strictPolicy(INPUT).includes(BASELINE_POLICY));
-  assert.deepEqual(securityHeaders(true).at(-1), { key: "Content-Security-Policy", value: BASELINE_POLICY });
-  assert.ok(!securityHeaders(false).some((h) => h.key === "Content-Security-Policy"));
-  for (const production of [true, false]) {
-    const names = securityHeaders(production).map((h) => h.key);
-    for (const name of ["X-Content-Type-Options", "Referrer-Policy", "X-Frame-Options", "Permissions-Policy"]) {
-      assert.ok(names.includes(name), `${name} fehlt`);
-    }
+  // <meta> kennt frame-ancestors nicht; das uebernimmt X-Frame-Options
+  assert.equal(BASELINE_META, "object-src 'none'; base-uri 'none'; form-action 'self'");
+  const headers = securityHeaders();
+  // Ein fester CSP-Header verdeckte auf Vercel die Nonce (Next liest content-security-policy der Anfrage)
+  assert.ok(!headers.some((h) => h.key.toLowerCase().startsWith("content-security-policy")));
+  const names = headers.map((h) => h.key);
+  for (const name of ["X-Content-Type-Options", "Referrer-Policy", "X-Frame-Options", "Permissions-Policy"]) {
+    assert.ok(names.includes(name), `${name} fehlt`);
   }
+  assert.equal(headers.find((h) => h.key === "X-Frame-Options")?.value, "DENY");
   // Mikrofon nur fuer die eigene Seite (Gespraech), Kamera und Bildschirmaufnahme nie
-  const permissions = securityHeaders(true).find((h) => h.key === "Permissions-Policy")?.value ?? "";
+  const permissions = headers.find((h) => h.key === "Permissions-Policy")?.value ?? "";
   for (const part of ["microphone=(self)", "camera=()", "display-capture=()"]) assert.ok(permissions.includes(part), part);
 });
 

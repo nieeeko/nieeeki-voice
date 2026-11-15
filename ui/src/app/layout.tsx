@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import { connection } from "next/server";
+import { BASELINE_META } from "@/lib/csp";
 import "./globals.css";
 
 // Kommandozentrale: breite Display-Schrift fuer Marke und grosse Zahlen, Mono fuer HUD-Beschriftungen.
@@ -53,6 +54,10 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   await connection();
   return (
     <html lang="de" className={`${display.variable} ${hud.variable} ${body.variable}`}>
+      <head>
+        {/* Grundschutz, immer scharf (lib/csp.ts, BASELINE_META): bewusst als <meta>, nicht als Header */}
+        <meta httpEquiv="Content-Security-Policy" content={BASELINE_META} />
+      </head>
       <body>{children}</body>
     </html>
   );
